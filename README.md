@@ -8,7 +8,7 @@ Cushion is a **partial** C preprocessor for softening the code before passing it
 
 ## License
 
-![LGPL3 license logo](./readme_resources/license.png)
+![LGPL3 license logo](./.readme/license.png)
 
 ## Motivation
 
@@ -59,7 +59,7 @@ executable.
   is just not relevant for the code generation. So, if your project is not that big, but includes system headers,
   your code generator will end up searching for actual code like these potatoes are searching for soil:
 
-<img src="./readme_resources/where_is_the_fucking_soil.jpg" width="300"/>
+<img src="./.readme/where_is_the_fucking_soil.jpg" width="300"/>
 
 It is possible to deal with these issues through different custom fixes, but all these issues raise one concern:
 shouldn't it be better to just use custom preprocessor tailored for the job?
