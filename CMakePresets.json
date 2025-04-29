@@ -1,0 +1,420 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "description": "Base configuration that is inherited everywhere.",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "development",
+      "description": "Base mixin for development builds.",
+      "inherits": [
+        "base"
+      ],
+      "hidden": true,
+      "cacheVariables": {
+        "CUSHION_TEST": "ON",
+        "CUSHION_EXTENSIONS": "ON",
+        "CUSHION_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "artifact_clean",
+      "description": "Base mixin for artifact builds without extensions.",
+      "inherits": [
+        "base"
+      ],
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUSHION_TEST": "OFF",
+        "CUSHION_EXTENSIONS": "OFF",
+        "CUSHION_WARNINGS_AS_ERRORS": "OFF"
+      }
+    },
+    {
+      "name": "artifact_extended",
+      "description": "Base mixin for artifact builds with extensions.",
+      "inherits": [
+        "base"
+      ],
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUSHION_TEST": "OFF",
+        "CUSHION_EXTENSIONS": "ON",
+        "CUSHION_WARNINGS_AS_ERRORS": "OFF"
+      }
+    },
+    {
+      "name": "ninja_gcc",
+      "description": "Mixin with common configuration for builds using ninja and gcc.",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc"
+      }
+    },
+    {
+      "name": "ninja_gcc_x32",
+      "description": "Mixin with common configuration for builds using ninja and gcc.",
+      "hidden": true,
+      "inherits": [
+        "ninja_gcc"
+      ],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-m32"
+      }
+    },
+    {
+      "name": "ninja_clang",
+      "description": "Mixin with common configuration for builds using ninja and clang.",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang"
+      }
+    },
+    {
+      "name": "ninja_msvc",
+      "description": "Mixin with common configuration for builds using ninja and msvc.",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "ninja_clang_cl",
+      "description": "Mixin with common configuration for builds using ninja and clang cl.",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl"
+      }
+    },
+    {
+      "name": "visual_studio_msvc",
+      "description": "Mixin with common configuration for builds using visual studio and cl.",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "toolset": {
+        "value": "v143",
+        "strategy": "set"
+      }
+    },
+    {
+      "name": "visual_studio_clang_cl",
+      "description": "Mixin with common configuration for builds using visual studio and clang cl.",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "toolset": {
+        "value": "clangcl",
+        "strategy": "set"
+      }
+    },
+    {
+      "name": "development_ninja_gcc_debug",
+      "description": "Profile for building debug development version on ninja with gcc.",
+      "inherits": [
+        "development",
+        "ninja_gcc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_gcc_release",
+      "description": "Profile for building release development version on ninja with gcc.",
+      "inherits": [
+        "development",
+        "ninja_gcc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_gcc_x32_debug",
+      "description": "Profile for building debug development version on ninja with gcc x32.",
+      "inherits": [
+        "development",
+        "ninja_gcc_x32"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_gcc_x32_release",
+      "description": "Profile for building release development version on ninja with gcc x32.",
+      "inherits": [
+        "development",
+        "ninja_gcc_x32"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_clang_debug",
+      "description": "Profile for building debug development version on ninja with clang.",
+      "inherits": [
+        "development",
+        "ninja_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_clang_release",
+      "description": "Profile for building release development version on ninja with clang.",
+      "inherits": [
+        "development",
+        "ninja_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_msvc_debug",
+      "description": "Profile for building debug development version on ninja with msvc.",
+      "inherits": [
+        "development",
+        "ninja_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_msvc_release",
+      "description": "Profile for building release development version on ninja with msvc.",
+      "inherits": [
+        "development",
+        "ninja_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_clang_cl_debug",
+      "description": "Profile for building debug development version on ninja with clang_cl.",
+      "inherits": [
+        "development",
+        "ninja_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_clang_cl_release",
+      "description": "Profile for building release development version on ninja with clang_cl.",
+      "inherits": [
+        "development",
+        "ninja_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_visual_studio_msvc_debug",
+      "description": "Profile for building debug development version on visual studio with msvc.",
+      "inherits": [
+        "development",
+        "visual_studio_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_visual_studio_msvc_release",
+      "description": "Profile for building release development version on visual studio with msvc.",
+      "inherits": [
+        "development",
+        "visual_studio_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_visual_studio_clang_cl_debug",
+      "description": "Profile for building debug development version on visual studio with clang cl.",
+      "inherits": [
+        "development",
+        "visual_studio_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_visual_studio_clang_cl_release",
+      "description": "Profile for building release development version on visual studio with clang cl.",
+      "inherits": [
+        "development",
+        "visual_studio_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "artifact_clean_linux",
+      "description": "Profile for building artifact clean version for linux.",
+      "inherits": [
+        "artifact_clean",
+        "ninja_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "artifact_extended_linux",
+      "description": "Profile for building artifact extended version for linux.",
+      "inherits": [
+        "artifact_extended",
+        "ninja_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "artifact_clean_windows",
+      "description": "Profile for building artifact clean version for windows.",
+      "inherits": [
+        "artifact_clean",
+        "visual_studio_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "artifact_extended_windows",
+      "description": "Profile for building artifact extended version for windows.",
+      "inherits": [
+        "artifact_extended",
+        "visual_studio_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ]
+}
