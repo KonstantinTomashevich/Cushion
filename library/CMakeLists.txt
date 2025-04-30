@@ -8,6 +8,15 @@ add_custom_command (
         COMMENT "Preprocess re2c syntax inside Cushion implementation."
         VERBATIM)
 
+# Add compile definitions globally in directory, as we have a highlight target too.
+if (CUSHION_EXTENSIONS)
+    add_compile_definitions (CUSHION_EXTENSIONS)
+endif ()
+
+add_compile_definitions (
+        "CUSHION_ALLOCATOR_PAGE_SIZE=${CUSHION_ALLOCATOR_PAGE_SIZE}"
+        "CUSHION_MACRO_BUCKETS=${CUSHION_MACRO_BUCKETS}")
+
 add_library (lib_cushion STATIC "${CUSHION_SOURCE_PREPROCESSED}")
 target_include_directories (lib_cushion PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

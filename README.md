@@ -72,9 +72,9 @@ Cushion **does not do full preprocessing**: its goal is to only make code proper
 this code would pass through actual preprocessing inside your compiler once again. In details:
 
 - It does not perform full include, instead tier-based include handling is used: using command line,
-  allowed-to-include (full include performed) and allowed-to-scan (only scan for macros, do not do anything else)
-  paths are provided. Other includes are just left as it is. That means that there would not be any unexpected code
-  in the output, which makes life for code generators easier and fixes system-header-bleeding issue described above.
+  full-include (do proper include) and scan-only-include (only scan for macros, do not do anything else) paths are 
+  provided. Other includes are just left as it is. That means that there would not be any unexpected code in the 
+  output, which makes life for code generators easier and fixes system-header-bleeding issue described above.
 
 - It only cares about conditional compilation, macro definitions and macro replacement, it does not touch pragmas,
   errors, warnings, embeds from new standard and so on.
