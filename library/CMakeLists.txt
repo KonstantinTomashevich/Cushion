@@ -3,10 +3,28 @@ set (CUSHION_SOURCE_PREPROCESSED "${CMAKE_CURRENT_BINARY_DIR}/cushion.c")
 
 add_custom_command (
         OUTPUT "${CUSHION_SOURCE_PREPROCESSED}"
-        COMMAND "${CUSHION_RE2C_EXECUTABLE}" "${CUSHION_SOURCE}" -o "${CUSHION_SOURCE_PREPROCESSED}"
+        COMMAND
+        "${CUSHION_RE2C_EXECUTABLE}"
+        "${CUSHION_SOURCE}"
+        -o "${CUSHION_SOURCE_PREPROCESSED}"
+        --depfile "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
+        -I "${CMAKE_CURRENT_BINARY_DIR}"
         DEPENDS "${CUSHION_SOURCE}"
+        DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
         COMMENT "Preprocess re2c syntax inside Cushion implementation."
         VERBATIM)
+
+if (CUSHION_IDENTIFIERS_UNICODE)
+    file (COPY_FILE
+            "${CMAKE_CURRENT_SOURCE_DIR}/identifiers_unicode.re"
+            "${CMAKE_CURRENT_BINARY_DIR}/identifiers.re"
+            ONLY_IF_DIFFERENT)
+else ()
+    file (COPY_FILE
+            "${CMAKE_CURRENT_SOURCE_DIR}/identifiers_ascii.re"
+            "${CMAKE_CURRENT_BINARY_DIR}/identifiers.re"
+            ONLY_IF_DIFFERENT)
+endif ()
 
 # Add compile definitions globally in directory, as we have a highlight target too.
 if (CUSHION_EXTENSIONS)
@@ -15,7 +33,8 @@ endif ()
 
 add_compile_definitions (
         "CUSHION_ALLOCATOR_PAGE_SIZE=${CUSHION_ALLOCATOR_PAGE_SIZE}"
-        "CUSHION_MACRO_BUCKETS=${CUSHION_MACRO_BUCKETS}")
+        "CUSHION_MACRO_BUCKETS=${CUSHION_MACRO_BUCKETS}"
+        "CUSHION_INPUT_BUFFER_SIZE=${CUSHION_INPUT_BUFFER_SIZE}")
 
 add_library (lib_cushion STATIC "${CUSHION_SOURCE_PREPROCESSED}")
 target_include_directories (lib_cushion PUBLIC

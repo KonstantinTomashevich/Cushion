@@ -286,6 +286,26 @@ statement accumulators can only be resolved when preprocessing is finished, ther
 But it shouldn't be an issue in most cases as it is very unlikely that you'll need to preprocess gigabytes of code and
 even if you do, you'll have lots of other issues to solve already.
 
+## Limitations
+
+Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 
+implementation has several limitations:
+
+- We do not fully support Unicode characters: they are only supported in strings and comments.
+  The reason is that re2c drowns in big character classes and becomes very slow.
+- We do not support universal character names.
+- We do not support non-simple escape sequences.
+- We do not support anything related to ISO/IEC 646.
+- Keep comments option does not preserve comments inside macros.
+- `typeof` from C23 is used to properly generate returns for `CUSHION_DEFER`.
+  It is possible to guess type for temporary storing return expression result without `typeof`,
+  but it is difficult and error-prone, therefore we use `typeof` for now.
+- There might be bugs and different non-standard-complying behaviours, unfortunately.
+  This tool is only tested on [Kan project](https://github.com/KonstantinTomashevich/Kan) and different errors might be
+  encountered on different projects.
+
+These limitations will be addressed on per-request basis when we have enough time to do so and when it is really needed.
+
 ## Acknowledgement
 
 This project would be quite difficult to build without [re2c](https://re2c.org/), which greatly simplifies building

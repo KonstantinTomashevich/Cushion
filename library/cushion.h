@@ -38,6 +38,7 @@ enum cushion_result_t
 {
     CUSHION_RESULT_OK = 0u,
     CUSHION_RESULT_PARTIAL_CONFIGURATION,
+    CUSHION_RESULT_UNSUPPORTED_FEATURES,
 };
 
 cushion_context_t cushion_context_create (void);

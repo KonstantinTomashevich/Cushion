@@ -13,10 +13,17 @@ set (CMAKE_C_STANDARD 11)
 option (CUSHION_TEST "Whether tests for Cushion are being built." OFF)
 option (CUSHION_EXTENSIONS "Whether Cushion library is built with extension support." OFF)
 
+# Unicode mode was added only temporary for testing and is not tested properly due to issues with slow code
+# generation for huge character groups in re2c. It also generates lots of code and is slow to compile.
+option (CUSHION_IDENTIFIERS_UNICODE
+        "Enables support for non-ASCII unicode characters in identifiers. Makes Cushion build very slow." OFF)
+
 # Implementation constants.
 
 set (CUSHION_ALLOCATOR_PAGE_SIZE "1048576" CACHE STRING "Size of an internal allocator inside cushion context.")
 set (CUSHION_MACRO_BUCKETS "1024" CACHE STRING "Count of buckets for macro search hash map.")
+set (CUSHION_INPUT_BUFFER_SIZE "16384" CACHE STRING
+        "Size of a buffer for input tokenization. Lexemes must not be bigger than this size.")
 
 # re2c search logic.
 
@@ -77,9 +84,7 @@ if (CUSHION_WARNINGS_AS_ERRORS)
                 -Wextra
                 -Werror
                 # We're aware that fallthrough is default implicit behavior and we use it in some cases.
-                -Wno-implicit-fallthrough
-                # Zero length arrays greatly increase readability for classes and structs with dynamic sizes.
-                -Wno-zero-length-array)
+                -Wno-implicit-fallthrough)
     endif ()
 endif ()
 
