@@ -30,6 +30,13 @@ enum cushion_feature_t
 
 enum cushion_option_t
 {
+    // TODO: Do we really need keep comments option?
+    //       Seems unnecessary and introduces lots of trouble.
+    //       Also, comment preservation is not fully standardized in compiler-provided preprocessors and they drop
+    //       comments whenever they think it is appropriate. I'm unable to find proper case for comment preservation.
+    //       Keep in mind that we still need to lex them, but we can avoid preserving them.
+    //       One of the main issues is deciding what happens with comments that participated in preprocessor directive.
+    //       Right now they're just dropped when directive is not preserved.
     CUSHION_OPTION_KEEP_COMMENTS = 0u,
     CUSHION_OPTION_FORBID_MACRO_REDEFINITION,
 };
@@ -39,6 +46,9 @@ enum cushion_result_t
     CUSHION_RESULT_OK = 0u,
     CUSHION_RESULT_PARTIAL_CONFIGURATION,
     CUSHION_RESULT_UNSUPPORTED_FEATURES,
+    CUSHION_RESULT_FAILED_TO_LEX_CONFIGURED_DEFINES,
+    CUSHION_RESULT_FAILED_TO_OPEN_OUTPUT,
+    CUSHION_RESULT_LEX_FAILED,
 };
 
 cushion_context_t cushion_context_create (void);

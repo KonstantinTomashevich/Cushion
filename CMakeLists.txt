@@ -24,6 +24,7 @@ set (CUSHION_ALLOCATOR_PAGE_SIZE "1048576" CACHE STRING "Size of an internal all
 set (CUSHION_MACRO_BUCKETS "1024" CACHE STRING "Count of buckets for macro search hash map.")
 set (CUSHION_INPUT_BUFFER_SIZE "16384" CACHE STRING
         "Size of a buffer for input tokenization. Lexemes must not be bigger than this size.")
+set (CUSHION_PATH_BUFFER_SIZE "4096" CACHE STRING "Size of a buffer for building included file paths.")
 
 # re2c search logic.
 

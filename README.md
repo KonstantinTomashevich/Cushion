@@ -6,6 +6,10 @@ Cushion is a **partial** C preprocessor for softening the code before passing it
 > Cushion is still in early development and this readme mostly describes intentions and plans, 
 > not actual implementation as of now, unfortunately.
 
+> > **Warning:**
+> Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
+> creating issues.
+
 ## License
 
 ![LGPL3 license logo](./.readme/license.png)
@@ -149,6 +153,11 @@ sugar for executing arbitrary code inside queries. Moreover, because of defer bl
 need from wrapped code if we need to or to just break out of query: cursor and access will be properly closed. Just 
 don't return value pointer like that, databases APIs do not expect such behavior for sure.
 
+There is an argument that similar result could be achieved through macro with variadic arguments. It is true and it is
+totally possible, however it is usually less readable and some code formatters have trouble with that approach. Also,
+debuggers might have an issue with using variadic arguments for wrapping as it may result in elision of proper line
+directives. Therefore, wrapper macros might be cleaner and more tool-friendly solution in most cases.
+
 ### Statement accumulators
 
 Statement accumulators are a framework for conditionally generating code in one place from another place. This feature
@@ -291,20 +300,22 @@ even if you do, you'll have lots of other issues to solve already.
 Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 
 implementation has several limitations:
 
-- We do not fully support Unicode characters: they are only supported in strings and comments.
+- Unicode characters are not fully supported: they are only supported in strings and comments.
   The reason is that re2c drowns in big character classes and becomes very slow.
-- We do not support universal character names.
-- We do not support non-simple escape sequences.
-- We do not support anything related to ISO/IEC 646.
-- Keep comments option does not preserve comments inside macros.
-- `typeof` from C23 is used to properly generate returns for `CUSHION_DEFER`.
-  It is possible to guess type for temporary storing return expression result without `typeof`,
-  but it is difficult and error-prone, therefore we use `typeof` for now.
-- There might be bugs and different non-standard-complying behaviours, unfortunately.
-  This tool is only tested on [Kan project](https://github.com/KonstantinTomashevich/Kan) and different errors might be
-  encountered on different projects.
+- Universal character names are not supported.
+- Only simple escape sequences (that is the term from specification) are supported.
+- Nothing related to ISO/IEC 646 is supported.
+- `typeof` from C23 is used to properly generate returns for `CUSHION_DEFER`. It is possible to guess type for temporary
+  storing return expression result before executing defers without `typeof`, but it is difficult and error-prone, 
+  therefore `typeof` is used for now as it is supported by most popular compilers.
+- There might be some bugs and some non-standard-complying behaviours, unfortunately. Not intentionally, but due to lack
+  of time and lack of skills (author is not a profession compiler/parser developer and only did these things as hobby 
+  projects). Also, this tool is only properly used right now on 
+  [Kan project](https://github.com/KonstantinTomashevich/Kan), therefore different projects might encounter different
+  errors that weren't found on Kan.
 
-These limitations will be addressed on per-request basis when we have enough time to do so and when it is really needed.
+These limitations will be addressed on per-request basis when it is really needed and when author has enough time to 
+do it properly.
 
 ## Acknowledgement
 

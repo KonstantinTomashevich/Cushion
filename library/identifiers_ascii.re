@@ -11,6 +11,6 @@
          instance, state,
          "Encountered non-ASCII character outside of comments and string literals."
          "This version of Cushion is built without unicode support for anything outside of comments and literals.");
-     return -1;
+     return;
  }
  */
