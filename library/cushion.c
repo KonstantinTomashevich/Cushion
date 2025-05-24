@@ -521,8 +521,9 @@ struct re2c_tags_t
 
 enum re2c_tokenization_state_t
 {
-    RE2C_TOKENIZATION_STATE_NEW_LINE = 0u,
-    RE2C_TOKENIZATION_STATE_REGULAR,
+    RE2C_TOKENIZATION_STATE_REGULAR = 0u,
+    RE2C_TOKENIZATION_STATE_NEW_LINE,
+    RE2C_TOKENIZATION_STATE_INCLUDE,
 };
 
 enum re2c_tokenization_flags_t
@@ -800,12 +801,13 @@ enum token_type_t
     TOKEN_TYPE_PREPROCESSOR_ELIFNDEF,
     TOKEN_TYPE_PREPROCESSOR_ELSE,
     TOKEN_TYPE_PREPROCESSOR_ENDIF,
-    TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM,
-    TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER,
+    TOKEN_TYPE_PREPROCESSOR_INCLUDE,
+    TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM,
+    TOKEN_TYPE_PREPROCESSOR_HEADER_USER,
     TOKEN_TYPE_PREPROCESSOR_DEFINE,
     TOKEN_TYPE_PREPROCESSOR_UNDEF,
     TOKEN_TYPE_PREPROCESSOR_LINE,
-    TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE,
+    TOKEN_TYPE_PREPROCESSOR_PRAGMA,
 
     TOKEN_TYPE_IDENTIFIER,
     TOKEN_TYPE_PUNCTUATOR,
@@ -1011,10 +1013,11 @@ static inline struct token_list_item_t *save_token_to_memory (struct context_t *
     case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
     case TOKEN_TYPE_PREPROCESSOR_ELSE:
     case TOKEN_TYPE_PREPROCESSOR_ENDIF:
+    case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
     case TOKEN_TYPE_PREPROCESSOR_DEFINE:
     case TOKEN_TYPE_PREPROCESSOR_UNDEF:
     case TOKEN_TYPE_PREPROCESSOR_LINE:
-    case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+    case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
     case TOKEN_TYPE_NUMBER_FLOATING:
     case TOKEN_TYPE_NEW_LINE:
     case TOKEN_TYPE_GLUE:
@@ -1023,8 +1026,8 @@ static inline struct token_list_item_t *save_token_to_memory (struct context_t *
     case TOKEN_TYPE_OTHER:
         break;
 
-    case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-    case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         target->token.header_path.begin = target->token.header_path.begin + (token->header_path.begin - token->begin);
         target->token.header_path.end = target->token.header_path.begin + (token->header_path.end - token->end);
         break;
@@ -1195,115 +1198,11 @@ start_next_token:
     state->token = state->cursor;
     output->begin = state->token;
 
-    switch (state->state)
-    {
-    case RE2C_TOKENIZATION_STATE_NEW_LINE:
-    {
-        // Reset state to regular as next tokens would use regular anyway.
-        state->state = RE2C_TOKENIZATION_STATE_REGULAR;
-        goto new_line_check_for_preprocessor_begin;
-
-    new_line_preprocessor_found:
-        re2c_save_cursor (state);
-
 #define PREPROCESSOR_EMIT_TOKEN(TOKEN)                                                                                 \
     re2c_clear_saved_cursor (state);                                                                                   \
     output->type = TOKEN;                                                                                              \
     output->end = state->cursor;                                                                                       \
     return
-
-    new_line_preprocessor_determine_type:
-        /*!re2c
-         !use:check_unsupported_in_code;
-
-         // Whitespaces and comments here will be part of the token, therefore we do not treat them as tokens.
-         whitespace+ { goto new_line_preprocessor_determine_type; }
-         multi_line_comment { goto new_line_preprocessor_determine_type; }
-
-         "if" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IF); }
-         "ifdef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IFDEF); }
-         "ifndef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IFNDEF); }
-         "elif" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIF); }
-         "elifdef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIFDEF); }
-         "elifndef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIFNDEF); }
-         "else" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELSE); }
-         "endif" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ENDIF); }
-
-         "include" (multi_line_comment | whitespace)+ "<" @marker_sub_begin [^\n>]+ @marker_sub_end ">"
-         {
-             output->header_path.begin = marker_sub_begin;
-             output->header_path.end = marker_sub_end;
-             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM);
-         }
-
-         "include" (multi_line_comment | whitespace)+ "\"" @marker_sub_begin [^\n"]+ @marker_sub_end ">"
-         {
-             output->header_path.begin = marker_sub_begin;
-             output->header_path.end = marker_sub_end;
-             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER);
-         }
-
-         // Catch includes that we were not able to match properly.
-         "include"
-         {
-             context_execution_error (instance, state, "Unable to properly parse include directive.");
-             return;
-         }
-
-         "define" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_DEFINE); }
-         "undef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_UNDEF); }
-         "line" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_LINE); }
-
-         "pragma" (multi_line_comment | whitespace)+ "once"
-         { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE); }
-
-         // Fallthrough.
-         identifier { }
-         * { }
-         $ { }
-         */
-
-        // This is a not preprocessor things that we care about. Just lex as hash and continue.
-        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
-        {
-            // If we're skipping regulars, no need to output punctuator.
-            goto skip_regular_routine;
-        }
-
-        re2c_restore_saved_cursor (state);
-        output->type = TOKEN_TYPE_PUNCTUATOR;
-        output->end = state->cursor;
-        output->punctuator_kind = PUNCTUATOR_KIND_HASH;
-        return;
-
-    new_line_check_for_preprocessor_begin:
-        re2c_save_cursor (state);
-
-        /*!re2c
-         "#" { goto new_line_preprocessor_found; }
-         * { }
-         $ { }
-         */
-
-        // Intentional fallthrough. Nothing specific for new line found.
-        re2c_restore_saved_cursor (state);
-    }
-
-    case RE2C_TOKENIZATION_STATE_REGULAR:
-    {
-        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
-        {
-            // Separate routine for breezing through anything that is not a preprocessor directive.
-        skip_regular_routine:
-            state->token = state->cursor;
-            output->begin = state->token;
-
-            /*!re2c
-             new_line { state->state = RE2C_TOKENIZATION_STATE_NEW_LINE; goto start_next_token; }
-             * { goto skip_regular_routine; }
-             $ { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_END_OF_FILE); }
-             */
-        }
 
 #define PREPROCESSOR_EMIT_TOKEN_IDENTIFIER(KIND)                                                                       \
     output->identifier_kind = KIND;                                                                                    \
@@ -1324,6 +1223,25 @@ start_next_token:
     output->symbolic_literal.begin = marker_sub_begin;                                                                 \
     output->symbolic_literal.end = marker_sub_end;                                                                     \
     PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_STRING_LITERAL)
+
+    switch (state->state)
+    {
+    case RE2C_TOKENIZATION_STATE_REGULAR:
+    {
+    regular_routine:
+        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
+        {
+            // Separate routine for breezing through anything that is not a preprocessor directive.
+        skip_regular_routine:
+            state->token = state->cursor;
+            output->begin = state->token;
+
+            /*!re2c
+             new_line { state->state = RE2C_TOKENIZATION_STATE_NEW_LINE; goto start_next_token; }
+             * { goto skip_regular_routine; }
+             $ { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_END_OF_FILE); }
+             */
+        }
 
         /*!re2c
          whitespace+ { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_GLUE); }
@@ -1586,14 +1504,120 @@ start_next_token:
          $ { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_END_OF_FILE); }
          */
 
+        break;
+    }
+
+    case RE2C_TOKENIZATION_STATE_NEW_LINE:
+    {
+        // Reset state to regular as next tokens would use regular anyway.
+        state->state = RE2C_TOKENIZATION_STATE_REGULAR;
+        goto new_line_check_for_preprocessor_begin;
+
+    new_line_preprocessor_found:
+        re2c_save_cursor (state);
+
+    new_line_preprocessor_determine_type:
+        /*!re2c
+         !use:check_unsupported_in_code;
+
+         // Whitespaces and comments prepending preprocessor command are just skipped..
+         whitespace+ { goto new_line_preprocessor_determine_type; }
+         multi_line_comment { goto new_line_preprocessor_determine_type; }
+
+         "if" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IF); }
+         "ifdef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IFDEF); }
+         "ifndef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_IFNDEF); }
+         "elif" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIF); }
+         "elifdef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIFDEF); }
+         "elifndef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELIFNDEF); }
+         "else" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ELSE); }
+         "endif" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_ENDIF); }
+
+         "include"
+         {
+             state->state = RE2C_TOKENIZATION_STATE_REGULAR;
+             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_INCLUDE);
+         }
+
+         "define" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_DEFINE); }
+         "undef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_UNDEF); }
+         "line" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_LINE); }
+         "pragma" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_PRAGMA); }
+
+         // Fallthrough.
+         identifier { }
+         * { }
+         $ { }
+         */
+
+        // This is a not preprocessor things that we care about. Just lex as hash and continue.
+        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
+        {
+            // If we're skipping regulars, no need to output punctuator.
+            goto skip_regular_routine;
+        }
+
+        re2c_restore_saved_cursor (state);
+        output->type = TOKEN_TYPE_PUNCTUATOR;
+        output->end = state->cursor;
+        output->punctuator_kind = PUNCTUATOR_KIND_HASH;
+        return;
+
+    new_line_check_for_preprocessor_begin:
+        re2c_save_cursor (state);
+
+        /*!re2c
+         "#" { goto new_line_preprocessor_found; }
+         * { }
+         $ { }
+         */
+
+        re2c_restore_saved_cursor (state);
+        // Nothing specific for new line found.
+        goto regular_routine;
+    }
+
+    case RE2C_TOKENIZATION_STATE_INCLUDE:
+    {
+        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
+        {
+            goto skip_regular_routine;
+        }
+
+        /*!re2c
+         // Whitespaces and comments prepending include path are just skipped.
+         whitespace+ { goto new_line_preprocessor_determine_type; }
+         multi_line_comment { goto new_line_preprocessor_determine_type; }
+
+         "<" @marker_sub_begin [^\n>]+ @marker_sub_end ">"
+         {
+             output->header_path.begin = marker_sub_begin;
+             output->header_path.end = marker_sub_end;
+             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM);
+         }
+
+         "\"" @marker_sub_begin [^\n"]+ @marker_sub_end "\""
+         {
+             output->header_path.begin = marker_sub_begin;
+             output->header_path.end = marker_sub_end;
+             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_HEADER_USER);
+         }
+
+         "#" { goto new_line_preprocessor_found; }
+         * { }
+         $ { }
+         */
+
+        // Nothing specific for the include statement found.
+        goto regular_routine;
+    }
+    }
+
 #undef PREPROCESSOR_EMIT_TOKEN_CHARACTER_LITERAL
 #undef PREPROCESSOR_EMIT_TOKEN_STRING_LITERAL
 #undef PREPROCESSOR_EMIT_TOKEN_PUNCTUATOR
 #undef PREPROCESSOR_EMIT_TOKEN_IDENTIFIER
 #undef PREPROCESSOR_EMIT_TOKEN
-        break;
-    }
-    }
 
     context_execution_error (instance, state, "Unexpected way to exit tokenizer, internal error.");
 }
@@ -1646,12 +1670,13 @@ static void lex_replacement_list (struct context_t *instance,
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
             context_execution_error (instance, tokenization_state,
                                      "Encountered preprocessor directive while lexing replacement list. Shouldn't be "
                                      "possible at all, can be an internal error.");
@@ -1673,35 +1698,8 @@ static void lex_replacement_list (struct context_t *instance,
             break;
 
         case TOKEN_TYPE_GLUE:
-            // Glue is ignored in replacement lists as replacements newer preserve formatting.
-            break;
-
         case TOKEN_TYPE_COMMENT:
-            if (context_has_option (instance, CUSHION_OPTION_KEEP_COMMENTS))
-            {
-                struct token_list_item_t *comment_token =
-                    save_token_to_memory (instance, &current_token, ALLOCATION_CLASS_PERSISTENT);
-
-                // We need to replace new lines with spaces to preserve one-replacement-one-line rule.
-                char *cursor = (char *) comment_token->token.begin;
-
-                while (cursor < comment_token->token.end)
-                {
-                    if (*cursor == '\n')
-                    {
-                        *cursor = ' ';
-                        if (cursor > comment_token->token.begin && *(cursor - 1u) == '\r')
-                        {
-                            *(cursor - 1u) = ' ';
-                        }
-                    }
-
-                    ++cursor;
-                }
-
-                APPEND_TOKEN_TO_LIST (comment_token);
-            }
-
+            // Glue and comments are ignored in replacement lists as replacements newer preserve formatting.
             break;
         }
 
@@ -1901,15 +1899,17 @@ static unsigned int lex_calculate_stringized_internal_size (struct token_list_it
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
         case TOKEN_TYPE_NEW_LINE:
-        case TOKEN_TYPE_END_OF_FILE:
         case TOKEN_TYPE_GLUE:
+        case TOKEN_TYPE_COMMENT:
+        case TOKEN_TYPE_END_OF_FILE:
             // Must never be a part of stringizing sequence.
             assert (0);
             break;
@@ -1947,30 +1947,6 @@ static unsigned int lex_calculate_stringized_internal_size (struct token_list_it
 
             break;
         }
-
-        case TOKEN_TYPE_COMMENT:
-        {
-            // For comments, new lines should be replaced with spaces.
-            size += token->token.end - token->token.begin;
-            const char *cursor = token->token.begin;
-
-            while (cursor < token->token.end)
-            {
-                if (*cursor == '\n')
-                {
-                    if (cursor > token->token.begin && *(cursor - 1u) == '\r')
-                    {
-                        // Two character new line is replaced by one space, so size decreases.
-                        --size;
-                    }
-                    // Regular new line is replaced by space, so size is not changed.
-                }
-
-                ++cursor;
-            }
-
-            break;
-        }
         }
 
         token = token->next;
@@ -1998,15 +1974,17 @@ static char *lex_write_stringized_internal_tokens (struct token_list_item_t *tok
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
         case TOKEN_TYPE_NEW_LINE:
-        case TOKEN_TYPE_END_OF_FILE:
         case TOKEN_TYPE_GLUE:
+        case TOKEN_TYPE_COMMENT:
+        case TOKEN_TYPE_END_OF_FILE:
             // Must never be a part of stringizing sequence.
             assert (0);
             break;
@@ -2077,42 +2055,6 @@ static char *lex_write_stringized_internal_tokens (struct token_list_item_t *tok
 
             break;
         }
-
-        case TOKEN_TYPE_COMMENT:
-        {
-            // For comments, new lines should be replaced with spaces.
-            const char *cursor = token->token.begin;
-            unsigned int previous_is_cr = 0u;
-
-            while (cursor < token->token.end)
-            {
-                if (*cursor == '\n')
-                {
-                    *output = ' ';
-                    ++output;
-                    previous_is_cr = 0u; // If there was CR, it is consumed now.
-                }
-                else if (*cursor == '\r')
-                {
-                    previous_is_cr = 1u;
-                }
-                else
-                {
-                    if (previous_is_cr)
-                    {
-                        *output = '\r';
-                        ++output;
-                    }
-
-                    *output = *cursor;
-                    ++output;
-                }
-
-                ++cursor;
-            }
-
-            break;
-        }
         }
 
         token = token->next;
@@ -2172,7 +2114,6 @@ struct macro_replacement_token_list_t
 {
     struct token_list_item_t *first;
     struct token_list_item_t *last;
-    struct token_list_item_t *last_non_comment;
 };
 
 struct macro_replacement_context_t
@@ -2207,10 +2148,6 @@ static inline void macro_replacement_token_list_append (struct lexer_file_state_
     }
 
     list->last = new_token;
-    if (token->type != TOKEN_TYPE_COMMENT)
-    {
-        list->last_non_comment = new_token;
-    }
 }
 
 static inline void macro_replacement_context_process_identifier_into_sub_list (
@@ -2218,7 +2155,6 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
 {
     context->sub_list.first = NULL;
     context->sub_list.last = NULL;
-    context->sub_list.last_non_comment = NULL;
 
     if (context->current_token->token.identifier_kind == IDENTIFIER_KIND_VA_ARGS ||
         context->current_token->token.identifier_kind == IDENTIFIER_KIND_VA_OPT)
@@ -2273,17 +2209,7 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
         {
             // Scan for the opening parenthesis.
             context->current_token = context->current_token->next;
-
-            // Preprocessor, new line, glue and end of file should never appear here anyway.
-            while (context->current_token && context->current_token->token.type == TOKEN_TYPE_COMMENT)
-            {
-                if (first_variadic_argument)
-                {
-                    macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token);
-                }
-
-                context->current_token = context->current_token->next;
-            }
+            // Preprocessor, new line, glue, comment and end of file should never appear here anyway.
 
             if (!context->current_token || context->current_token->token.type != TOKEN_TYPE_PUNCTUATOR ||
                 context->current_token->token.punctuator_kind != PUNCTUATOR_KIND_LEFT_PARENTHESIS)
@@ -2387,10 +2313,6 @@ static void macro_replacement_context_append_sub_list (struct macro_replacement_
         }
 
         context->result.last = context->sub_list.last;
-        if (context->sub_list.last_non_comment)
-        {
-            context->result.last_non_comment = context->sub_list.last_non_comment;
-        }
     }
 }
 
@@ -2412,13 +2334,11 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
             {
                 .first = NULL,
                 .last = NULL,
-                .last_non_comment = NULL,
             },
         .sub_list =
             {
                 .first = NULL,
                 .last = NULL,
-                .last_non_comment = NULL,
             },
     };
 
@@ -2434,15 +2354,17 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
         case TOKEN_TYPE_NEW_LINE:
-        case TOKEN_TYPE_END_OF_FILE:
+        case TOKEN_TYPE_COMMENT:
         case TOKEN_TYPE_GLUE:
+        case TOKEN_TYPE_END_OF_FILE:
             // Must never be a part of valid lexed macro.
             assert (0);
             break;
@@ -2465,13 +2387,7 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
             {
                 // Stringify next argument, skipping comments. Error if next token is not an argument.
                 context.current_token = context.current_token->next;
-
-                // Preprocessor, new line, glue and end of file should never appear here anyway.
-                while (context.current_token && context.current_token->token.type == TOKEN_TYPE_COMMENT)
-                {
-                    macro_replacement_token_list_append (state, &context.result, &context.current_token->token);
-                    context.current_token = context.current_token->next;
-                }
+                // Preprocessor, new line, glue, comment and end of file should never appear here anyway.
 
                 if (!context.current_token)
                 {
@@ -2611,14 +2527,14 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                 // and then doing merge, but it makes implementation more complicated and should not affect performance
                 // that much, therefore simple merge is used right now.
 
-                if (!context.result.last_non_comment)
+                if (!context.result.last)
                 {
                     context_execution_error (state->instance, &state->tokenization,
                                              "Encountered \"##\" operator as a first token in macro replacement list.");
                     break;
                 }
 
-                if (context.result.last_non_comment->token.type != TOKEN_TYPE_IDENTIFIER)
+                if (context.result.last->token.type != TOKEN_TYPE_IDENTIFIER)
                 {
                     context_execution_error (state->instance, &state->tokenization,
                                              "Encountered \"##\" operator after non-identifier token, which is "
@@ -2633,13 +2549,7 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                 {
                     // Find next token for merging.
                     context.current_token = context.current_token->next;
-
-                    // Preprocessor, new line, glue and end of file should never appear here anyway.
-                    while (context.current_token && context.current_token->token.type == TOKEN_TYPE_COMMENT)
-                    {
-                        macro_replacement_token_list_append (state, &context.result, &context.current_token->token);
-                        context.current_token = context.current_token->next;
-                    }
+                    // Preprocessor, new line, glue, comment and end of file should never appear here anyway.
 
                     if (!context.current_token)
                     {
@@ -2658,20 +2568,6 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                     }
 
                     macro_replacement_context_process_identifier_into_sub_list (state, &context);
-
-                    // Skip comments if any.
-                    // Preprocessor, new line, glue and end of file should never appear here anyway.
-                    while (context.sub_list.first)
-                    {
-                        if (context.sub_list.first->token.type != TOKEN_TYPE_COMMENT)
-                        {
-                            break;
-                        }
-
-                        macro_replacement_token_list_append (state, &context.result, &context.sub_list.first->token);
-                        context.sub_list.first = context.sub_list.first->next;
-                    }
-
                     if (!context.sub_list.first)
                     {
                         // Empty sub list, check next identifier.
@@ -2687,7 +2583,7 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                     }
 
                     unsigned int base_identifier_length =
-                        context.result.last_non_comment->token.end - context.result.last_non_comment->token.begin;
+                        context.result.last->token.end - context.result.last->token.begin;
                     unsigned int append_identifier_length =
                         context.sub_list.first->token.end - context.sub_list.first->token.begin;
 
@@ -2696,21 +2592,15 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                         _Alignof (char), ALLOCATION_CLASS_TRANSIENT);
                     char *new_token_data_end = new_token_data + base_identifier_length + append_identifier_length;
 
-                    memcpy (new_token_data, context.result.last_non_comment->token.begin, base_identifier_length);
+                    memcpy (new_token_data, context.result.last->token.begin, base_identifier_length);
                     memcpy (new_token_data + base_identifier_length, context.sub_list.first->token.begin,
                             append_identifier_length);
                     *new_token_data_end = '\0';
 
-                    context.result.last_non_comment->token.begin = new_token_data;
-                    context.result.last_non_comment->token.end = new_token_data_end;
-                    context.result.last_non_comment->token.identifier_kind = lex_relculate_identifier_kind (
-                        context.result.last_non_comment->token.begin, context.result.last_non_comment->token.end);
-
-                    // Pop sub list first identifier.
-                    if (context.sub_list.last_non_comment == context.sub_list.first)
-                    {
-                        context.sub_list.last_non_comment = NULL;
-                    }
+                    context.result.last->token.begin = new_token_data;
+                    context.result.last->token.end = new_token_data_end;
+                    context.result.last->token.identifier_kind = lex_relculate_identifier_kind (
+                        context.result.last->token.begin, context.result.last->token.end);
 
                     context.sub_list.first = context.sub_list.first->next;
                     macro_replacement_context_append_sub_list (&context);
@@ -2731,7 +2621,6 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
         case TOKEN_TYPE_NUMBER_FLOATING:
         case TOKEN_TYPE_CHARACTER_LITERAL:
         case TOKEN_TYPE_STRING_LITERAL:
-        case TOKEN_TYPE_COMMENT:
         case TOKEN_TYPE_OTHER:
             macro_replacement_token_list_append (state, &context.result, &context.current_token->token);
             break;
@@ -2749,9 +2638,17 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
 
 static void lex_code_identifier (struct lexer_file_state_t *state, struct token_t *current_token);
 
-static void lex_code_comment (struct context_t *instance,
-                              struct token_t *current_token,
-                              unsigned int are_escaped_new_lines_required);
+static inline void lex_preprocessor_fixup_line (struct lexer_file_state_t *state)
+{
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u &&
+        (!state->conditional_inclusion_node ||
+         state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_INCLUDED))
+    {
+        // Make sure that next portion of code starts with correct line directive.
+        // Useful for conditional inclusion and for file includes.
+        context_output_line_marker (state->instance, state->tokenization.cursor_line, state->tokenization.file_name);
+    }
+}
 
 #define LEX_WHEN_ERROR(...)                                                                                            \
     if (context_is_error_signaled (state->instance))                                                                   \
@@ -2803,17 +2700,17 @@ static inline void lex_preprocessor_preserved_tail (
         context_output_null_terminated (state->instance, "#endif ");
         break;
 
-    case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-    case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
-        // Should be okay for the particular case of includes as they do not parse tokens after them right away.
-        context_output_sequence (state->instance, preprocessor_token->begin, preprocessor_token->end);
-        break;
-
+    case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
     case TOKEN_TYPE_PREPROCESSOR_UNDEF:
     case TOKEN_TYPE_PREPROCESSOR_LINE:
-    case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
         // This token should not support preserve logic.
         assert (0u);
+        break;
+
+    case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+        context_output_null_terminated (state->instance, "#pragma ");
         break;
 
     case TOKEN_TYPE_PREPROCESSOR_DEFINE:
@@ -2891,12 +2788,13 @@ static inline void lex_preprocessor_preserved_tail (
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
             context_execution_error (state->instance, &state->tokenization,
                                      "Encountered preprocessor directive while lexing preserved preprocessor "
                                      "directive. Shouldn't be possible at all, can be an internal error.");
@@ -2920,10 +2818,12 @@ static inline void lex_preprocessor_preserved_tail (
         case TOKEN_TYPE_NEW_LINE:
             // New line, tail has ended, paste the new line and return out of here.
             context_output_sequence (state->instance, current_token.begin, current_token.end);
+            // Fixup line in case of skipped multi-line comments.
+            lex_preprocessor_fixup_line (state);
             return;
 
         case TOKEN_TYPE_COMMENT:
-            lex_code_comment (state->instance, &current_token, 1u);
+            // We erase comments.
             break;
 
         case TOKEN_TYPE_END_OF_FILE:
@@ -2994,27 +2894,8 @@ static struct token_list_item_t *lex_replace_identifier_if_macro (
                 break;
 
             case TOKEN_TYPE_GLUE:
-                // Glue between macro name and arguments is just skipped.
-                break;
-
             case TOKEN_TYPE_COMMENT:
-                if (context_has_option (state->instance, CUSHION_OPTION_KEEP_COMMENTS))
-                {
-                    struct token_list_item_t *comment_token =
-                        save_token_to_memory (state->instance, &current_token, ALLOCATION_CLASS_TRANSIENT);
-
-                    if (result_tokens_last)
-                    {
-                        result_tokens_last->next = comment_token;
-                    }
-                    else
-                    {
-                        result_tokens_first = comment_token;
-                    }
-
-                    result_tokens_last = comment_token;
-                }
-
+                // Glue and comments between macro name and arguments are just skipped.
                 break;
 
             default:
@@ -3127,15 +3008,8 @@ static struct token_list_item_t *lex_replace_identifier_if_macro (
                 break;
 
             case TOKEN_TYPE_GLUE:
-                // Glue is not usually kept in macro arguments.
-                break;
-
             case TOKEN_TYPE_COMMENT:
-                if (context_has_option (state->instance, CUSHION_OPTION_KEEP_COMMENTS) && parameterless_function_line)
-                {
-                    goto append_argument_token;
-                }
-
+                // Glue and comments are not usually kept in macro arguments.
                 break;
 
             case TOKEN_TYPE_END_OF_FILE:
@@ -3310,12 +3184,13 @@ static long long lex_preprocessor_evaluate_argument (struct lexer_file_state_t *
         case TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
         case TOKEN_TYPE_PREPROCESSOR_ELSE:
         case TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
         case TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case TOKEN_TYPE_PREPROCESSOR_LINE:
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
             context_execution_error (state->instance, &state->tokenization,
                                      "Encountered preprocessor directive while evaluating preprocessor conditional "
                                      "expression. Shouldn't be possible at all, can be an internal error.");
@@ -4088,18 +3963,6 @@ static unsigned int lex_preprocessor_if_is_transitively_excluded_conditional (st
     return 0u;
 }
 
-static inline void lex_preprocessor_fixup_line (struct lexer_file_state_t *state)
-{
-    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u &&
-        (!state->conditional_inclusion_node ||
-         state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_INCLUDED))
-    {
-        // Make sure that next portion of code starts with correct line directive.
-        // Useful for conditional inclusion and for file includes.
-        context_output_line_marker (state->instance, state->tokenization.cursor_line, state->tokenization.file_name);
-    }
-}
-
 static void lex_preprocessor_if (struct lexer_file_state_t *state, const struct token_t *preprocessor_token)
 {
     if (lex_preprocessor_if_is_transitively_excluded_conditional (state))
@@ -4295,7 +4158,7 @@ static void lex_preprocessor_elifdef (struct lexer_file_state_t *state,
     }
 
     lex_do_not_skip_regular (state);
-    unsigned int start_line = state->tokenization.cursor_line;
+    const unsigned int start_line = state->tokenization.cursor_line;
     struct token_t current_token;
 
     lex_skip_glue_and_comments (state, &current_token);
@@ -4374,7 +4237,7 @@ static void lex_file_from_handle (struct context_t *instance,
                                   enum lex_file_flags_t flags);
 
 static unsigned int lex_preprocessor_try_include (struct lexer_file_state_t *state,
-                                                  const struct token_t *preprocessor_token,
+                                                  const struct token_t *header_token,
                                                   struct include_node_t *include_node)
 {
     if (include_node)
@@ -4383,10 +4246,9 @@ static unsigned int lex_preprocessor_try_include (struct lexer_file_state_t *sta
         LEX_WHEN_ERROR (return 1u)
     }
 
-    lexer_file_state_path_append_sequence (state, preprocessor_token->header_path.begin,
-                                           preprocessor_token->header_path.end);
-
+    lexer_file_state_path_append_sequence (state, header_token->header_path.begin, header_token->header_path.end);
     FILE *input_file = fopen (state->path_buffer.data, "r");
+
     if (!input_file)
     {
         // File at this path does not exist or is not available.
@@ -4411,9 +4273,28 @@ static unsigned int lex_preprocessor_try_include (struct lexer_file_state_t *sta
     return 1u;
 }
 
-static void lex_preprocessor_include (struct lexer_file_state_t *state, const struct token_t *preprocessor_token)
+static void lex_preprocessor_include (struct lexer_file_state_t *state)
 {
-    if (preprocessor_token->type == TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER)
+    lex_do_not_skip_regular (state);
+    const unsigned int start_line = state->tokenization.cursor_line;
+    struct token_t current_token;
+
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    switch (current_token.type)
+    {
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+    case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+        break;
+
+    default:
+        context_execution_error (state->instance, &state->tokenization, "Expected header path after #include.");
+        return;
+    }
+
+    unsigned int include_happened = 0u;
+    if (current_token.type == TOKEN_TYPE_PREPROCESSOR_HEADER_USER)
     {
         lexer_file_state_path_init (state, state->file_name);
         LEX_WHEN_ERROR (return)
@@ -4444,32 +4325,44 @@ static void lex_preprocessor_include (struct lexer_file_state_t *state, const st
             }
         }
 
-        if (lex_preprocessor_try_include (state, preprocessor_token, NULL))
+        if (lex_preprocessor_try_include (state, &current_token, NULL))
         {
-            goto finish_include_line;
+            include_happened = 1u;
         }
     }
 
     struct include_node_t *node = state->instance->includes_first;
-    while (node)
+    while (node && !include_happened)
     {
-        if (lex_preprocessor_try_include (state, preprocessor_token, node))
+        if (lex_preprocessor_try_include (state, &current_token, node))
         {
-        finish_include_line:
-            lex_do_not_skip_regular (state);
-            lex_preprocessor_expect_new_line (state);
-            LEX_WHEN_ERROR (return)
-            lex_preprocessor_fixup_line (state);
-            lex_update_tokenization_flags (state);
-            return;
+            include_happened = 1u;
+            break;
         }
 
         node = node->next;
     }
 
-    // Include not found, just preserve it in code.
-    lex_preprocessor_preserved_tail (state, preprocessor_token, NULL);
-#undef INIT_PATH
+    if (!include_happened && (state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        // Include not found. Preserve it in code.
+        context_output_null_terminated (state->instance, "#include ");
+        context_output_sequence (state->instance, current_token.begin, current_token.end);
+        context_output_null_terminated (state->instance, "\n");
+    }
+
+    lex_preprocessor_expect_new_line (state);
+    LEX_WHEN_ERROR (return)
+
+    if (include_happened ||
+        // If there were multiline comments, we need to fixup line.
+        // Expected line is always start_line + 1, because we're read new line too.
+        start_line + 1u != state->tokenization.cursor_line)
+    {
+        lex_preprocessor_fixup_line (state);
+    }
+
+    lex_update_tokenization_flags (state);
 }
 
 static void lex_code_identifier (struct lexer_file_state_t *state, struct token_t *current_token)
@@ -4504,55 +4397,6 @@ static void lex_code_identifier (struct lexer_file_state_t *state, struct token_
     {
         // Not a macro, just regular identifier.
         context_output_sequence (state->instance, current_token->begin, current_token->end);
-    }
-}
-
-static void lex_code_comment (struct context_t *instance,
-                              struct token_t *current_token,
-                              unsigned int are_escaped_new_lines_required)
-{
-    if (context_has_option (instance, CUSHION_OPTION_KEEP_COMMENTS))
-    {
-        context_output_sequence (instance, current_token->begin, current_token->end);
-    }
-    else
-    {
-        // Insert new lines from the comment so line number is not broken. Escaped new lines are required when skipping
-        // comment that was a part of preserved conditional inclusion or preserved macro. Also, if there is no new
-        // lines, insert guarding space to be safe in cases like "id1/*comment*/id2".
-
-        const char *cursor = current_token->begin;
-        unsigned int previous_is_cr = 0u;
-        unsigned int any_new_line = 0u;
-
-        while (cursor < current_token->end)
-        {
-            if (*cursor == '\n')
-            {
-                any_new_line = 1u;
-                if (are_escaped_new_lines_required)
-                {
-                    context_output_null_terminated (instance, "\\");
-                }
-
-                if (previous_is_cr)
-                {
-                    context_output_null_terminated (instance, "\r\n");
-                }
-                else
-                {
-                    context_output_null_terminated (instance, "\n");
-                }
-            }
-
-            previous_is_cr = *cursor == '\r';
-            ++cursor;
-        }
-
-        if (!any_new_line)
-        {
-            context_output_null_terminated (instance, " ");
-        }
     }
 }
 
@@ -4627,6 +4471,7 @@ static void lex_file_from_handle (struct context_t *instance,
 
     struct token_t current_token;
     current_token.type = TOKEN_TYPE_NEW_LINE; // Just stub value.
+    unsigned int previous_token_line = state->tokenization.cursor_line;
     enum lexer_token_stack_item_flags_t current_token_flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE;
 
     while (lexer_file_state_should_continue (state))
@@ -4688,14 +4533,19 @@ static void lex_file_from_handle (struct context_t *instance,
             lex_preprocessor_endif (state, &current_token);
             break;
 
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_SYSTEM:
-        case TOKEN_TYPE_PREPROCESSOR_INCLUDE_USER:
+        case TOKEN_TYPE_PREPROCESSOR_INCLUDE:
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                lex_preprocessor_include (state, &current_token);
+                lex_preprocessor_include (state);
             }
 
+            break;
+
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+            context_execution_error (instance, &state->tokenization,
+                                     "Unexpected header path token (no prior #include).");
             break;
 
         case TOKEN_TYPE_PREPROCESSOR_DEFINE:
@@ -4726,11 +4576,11 @@ static void lex_file_from_handle (struct context_t *instance,
 
             break;
 
-        case TOKEN_TYPE_PREPROCESSOR_PRAGMA_ONCE:
+        case TOKEN_TYPE_PREPROCESSOR_PRAGMA:
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                // TODO: Implement.
+                // TODO: Implement. Check if next identifier is once and process it. Otherwise, preserve tail.
             }
 
             break;
@@ -4751,7 +4601,18 @@ static void lex_file_from_handle (struct context_t *instance,
             break;
 
         case TOKEN_TYPE_COMMENT:
-            lex_code_comment (instance, &current_token, 0u);
+            // If it was a multiline comment, fixup line number.
+            if (previous_token_line != state->tokenization.cursor_line)
+            {
+                context_output_null_terminated (state->instance, "\n");
+                lex_preprocessor_fixup_line (state);
+            }
+            else
+            {
+                // Just a space to make sure that tokens are not merged by mistake.
+                context_output_null_terminated (state->instance, " ");
+            }
+
             break;
 
         case TOKEN_TYPE_END_OF_FILE:
@@ -4765,6 +4626,8 @@ static void lex_file_from_handle (struct context_t *instance,
 
             break;
         }
+
+        previous_token_line = state->tokenization.cursor_line;
     }
 
     // Currently there is no safe way to reset transient data except for the end of file lexing.

@@ -143,11 +143,7 @@ int main (int argc, char **argv)
             break;
 
         case ARGUMENT_MODE_OPTIONS:
-            if (strcmp (argument, "keep-comments") == 0)
-            {
-                cushion_context_configure_option (context, CUSHION_OPTION_KEEP_COMMENTS, 1u);
-            }
-            else if (strcmp (argument, "forbid-macro-redefinition") == 0)
+            if (strcmp (argument, "forbid-macro-redefinition") == 0)
             {
                 cushion_context_configure_option (context, CUSHION_OPTION_FORBID_MACRO_REDEFINITION, 1u);
             }

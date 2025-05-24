@@ -28,17 +28,16 @@ enum cushion_feature_t
     CUSHION_FEATURE_STATEMENT_ACCUMULATOR,
 };
 
+/// \details There is no option for keeping comments for several reasons:
+///          - There is no kind-of-standard behavior for doing so, some preprocessors still eat some comments in
+///            some cases even with all the options.
+///          - It is difficult to find a case for using them for passing meta information in code, because custom
+///            pragmas are much more useful for that case.
+///          That means that there is no standardized way to handle them and there is no use case for cushion when it
+///          is useful to keep comments, therefore doing it right now is futile and unnecessary complicates code.
 enum cushion_option_t
 {
-    // TODO: Do we really need keep comments option?
-    //       Seems unnecessary and introduces lots of trouble.
-    //       Also, comment preservation is not fully standardized in compiler-provided preprocessors and they drop
-    //       comments whenever they think it is appropriate. I'm unable to find proper case for comment preservation.
-    //       Keep in mind that we still need to lex them, but we can avoid preserving them.
-    //       One of the main issues is deciding what happens with comments that participated in preprocessor directive.
-    //       Right now they're just dropped when directive is not preserved.
-    CUSHION_OPTION_KEEP_COMMENTS = 0u,
-    CUSHION_OPTION_FORBID_MACRO_REDEFINITION,
+    CUSHION_OPTION_FORBID_MACRO_REDEFINITION = 0u,
 };
 
 enum cushion_result_t
