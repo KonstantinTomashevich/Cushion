@@ -2636,7 +2636,16 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
     return context.result.first;
 }
 
-static void lex_code_identifier (struct lexer_file_state_t *state, struct token_t *current_token);
+enum lex_replace_identifier_if_macro_context_t
+{
+    LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE = 0u,
+    LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION,
+};
+
+static struct token_list_item_t *lex_replace_identifier_if_macro (
+    struct lexer_file_state_t *state,
+    struct token_t *identifier_token,
+    enum lex_replace_identifier_if_macro_context_t context);
 
 static inline void lex_preprocessor_fixup_line (struct lexer_file_state_t *state)
 {
@@ -2801,9 +2810,38 @@ static inline void lex_preprocessor_preserved_tail (
             return;
 
         case TOKEN_TYPE_IDENTIFIER:
-            // Identifier lexing is the same as in actual code as macro replacement might still happen.
-            lex_code_identifier (state, &current_token);
+        {
+            switch (current_token.identifier_kind)
+            {
+            case IDENTIFIER_KIND_CUSHION_PRESERVE:
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Encountered cushion preserve keyword in unexpected context.");
+                return;
+
+            case IDENTIFIER_KIND_CUSHION_WRAPPED:
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Encountered cushion wrapped keyword in preserved preprocessor context.");
+                return;
+
+            default:
+                break;
+            }
+
+            struct token_list_item_t *macro_tokens = lex_replace_identifier_if_macro (
+                state, &current_token, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
+
+            if (macro_tokens)
+            {
+                lexer_file_state_push_tokens (state, macro_tokens, LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT);
+            }
+            else
+            {
+                // Not a macro, just regular identifier.
+                context_output_sequence (state->instance, current_token.begin, current_token.end);
+            }
+
             break;
+        }
 
         case TOKEN_TYPE_PUNCTUATOR:
         case TOKEN_TYPE_NUMBER_INTEGER:
@@ -2834,12 +2872,6 @@ static inline void lex_preprocessor_preserved_tail (
         }
     }
 }
-
-enum lex_replace_identifier_if_macro_context_t
-{
-    LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE = 0u,
-    LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION,
-};
 
 static struct token_list_item_t *lex_replace_identifier_if_macro (
     struct lexer_file_state_t *state,
@@ -4365,10 +4397,148 @@ static void lex_preprocessor_include (struct lexer_file_state_t *state)
     lex_update_tokenization_flags (state);
 }
 
+static inline void lex_skip_glue_comments_new_line (struct lexer_file_state_t *state, struct token_t *current_token)
+{
+    while (lexer_file_state_should_continue (state))
+    {
+        lexer_file_state_pop_token (state, current_token);
+        LEX_WHEN_ERROR (return)
+
+        switch (current_token->type)
+        {
+        case TOKEN_TYPE_NEW_LINE:
+        case TOKEN_TYPE_GLUE:
+        case TOKEN_TYPE_COMMENT:
+            break;
+
+        default:
+            return;
+        }
+    }
+}
+
+static void lex_code_macro_pragma (struct lexer_file_state_t *state)
+{
+    const unsigned int start_line = state->tokenization.cursor_line;
+    struct token_t current_token;
+    lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        context_execution_error (state->instance, &state->tokenization, "Expected \"(\" after _Pragma.");
+        return;
+    }
+
+    lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_STRING_LITERAL)
+    {
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Expected string literal as argument of _Pragma.");
+        return;
+    }
+
+    if (current_token.symbolic_literal.encoding != TOKEN_SUBSEQUENCE_ENCODING_ORDINARY)
+    {
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Only ordinary encoding supported for _Pragma argument.");
+        return;
+    }
+
+    // Currently, we cannot check whether we're already at new line, so we're adding new line just in case.
+    // New line addition (even if it was necessary) breaks line numbering for errors,
+    // therefore we need to add line directive before it too.
+
+    context_output_null_terminated (state->instance, "\n");
+    context_output_line_marker (state->instance, start_line, state->tokenization.file_name);
+    context_output_null_terminated (state->instance, "#pragma ");
+
+    const char *output_begin_cursor = current_token.symbolic_literal.begin;
+    const char *cursor = current_token.symbolic_literal.begin;
+
+    while (cursor < current_token.symbolic_literal.end)
+    {
+        if (*cursor == '\\')
+        {
+            if (cursor + 1u >= current_token.symbolic_literal.end)
+            {
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Encountered \"\\\" as the last symbol of _Pragma argument literal.");
+                return;
+            }
+
+            if (output_begin_cursor < cursor)
+            {
+                context_output_sequence (state->instance, output_begin_cursor, cursor);
+                output_begin_cursor = cursor;
+            }
+
+            ++cursor;
+            switch (*cursor)
+            {
+            case '"':
+            case '\\':
+                // Allowed to be escaped.
+                break;
+
+            default:
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Encountered unsupported escape \"\\%c\" in _Pragma argument literal, only "
+                                         "\"\\\\\" and \"\\\"\" are supported in that context.");
+                return;
+            }
+        }
+
+        ++cursor;
+    }
+
+    if (output_begin_cursor < cursor)
+    {
+        context_output_sequence (state->instance, output_begin_cursor, cursor);
+    }
+
+    context_output_null_terminated (state->instance, "\n");
+    lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+    {
+        context_execution_error (state->instance, &state->tokenization, "Expected \")\" after _Pragma argument.");
+        return;
+    }
+
+    // Always fixup line as pragma output results in new line.
+    lex_preprocessor_fixup_line (state);
+}
+
 static void lex_code_identifier (struct lexer_file_state_t *state, struct token_t *current_token)
 {
     // When we're doing scan only pass, we should not lex identifiers like this at all.
     assert (!(state->flags & LEX_FILE_FLAG_SCAN_ONLY));
+
+    switch (current_token->identifier_kind)
+    {
+    case IDENTIFIER_KIND_CUSHION_PRESERVE:
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Encountered cushion preserve keyword in unexpected context.");
+        return;
+
+    case IDENTIFIER_KIND_CUSHION_WRAPPED:
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Encountered cushion wrapped keyword in unexpected context.");
+        return;
+
+    case IDENTIFIER_KIND_MACRO_PRAGMA:
+        lex_code_macro_pragma (state);
+        return;
+
+    default:
+        break;
+    }
 
     if (current_token->identifier_kind == IDENTIFIER_KIND_CUSHION_PRESERVE)
     {
@@ -4383,8 +4553,6 @@ static void lex_code_identifier (struct lexer_file_state_t *state, struct token_
                                  "Encountered cushion wrapped keyword in unexpected context.");
         return;
     }
-
-    // TODO: Process _Pragma here? Do not use this function inside preprocessor lex?
 
     struct token_list_item_t *macro_tokens =
         lex_replace_identifier_if_macro (state, current_token, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE);
