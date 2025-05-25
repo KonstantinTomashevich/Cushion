@@ -286,6 +286,8 @@ struct input_node_t
 
 enum macro_flags_t
 {
+    MACRO_FLAG_NONE = 0u,
+
     /// \brief It is a function-like macro. Even macro without arguments can be function-like.
     MACRO_FLAG_FUNCTION = 1u << 0u,
 
@@ -305,7 +307,7 @@ struct macro_node_t
     struct macro_node_t *next;
     unsigned int name_hash;
     const char *name;
-    unsigned int flags;
+    enum macro_flags_t flags;
 
     union
     {
@@ -420,6 +422,15 @@ static inline unsigned int context_has_option (struct context_t *instance, enum 
 static void context_macro_add (struct context_t *instance, struct macro_node_t *node)
 {
     node->name_hash = hash_djb2_null_terminated (node->name);
+    // To have consistent behavior, calculate parameter hashes here too.
+    struct macro_parameter_node_t *parameter = node->parameters_first;
+
+    while (parameter)
+    {
+        parameter->name_hash = hash_djb2_null_terminated (parameter->name);
+        parameter = parameter->next;
+    }
+
     struct macro_node_t *bucket_list = instance->macro_buckets[node->name_hash % CUSHION_MACRO_BUCKETS];
     struct macro_node_t *already_here =
         macro_search_in_list (bucket_list, node->name_hash, node->name, node->name + strlen (node->name));
@@ -1624,10 +1635,17 @@ start_next_token:
 
 // Lexer implementation.
 
-static void lex_replacement_list (struct context_t *instance,
-                                  struct re2c_state_t *tokenization_state,
-                                  struct token_list_item_t **token_list_output)
+enum lex_replacement_list_result_t
 {
+    LEX_REPLACEMENT_LIST_RESULT_REGULAR = 0u,
+    LEX_REPLACEMENT_LIST_RESULT_PRESERVED,
+};
+
+static enum lex_replacement_list_result_t lex_replacement_list (struct context_t *instance,
+                                                                struct re2c_state_t *tokenization_state,
+                                                                struct token_list_item_t **token_list_output)
+{
+    *token_list_output = NULL;
     struct token_list_item_t *first = NULL;
     struct token_list_item_t *last = NULL;
     struct token_t current_token;
@@ -1639,7 +1657,7 @@ static void lex_replacement_list (struct context_t *instance,
         if (context_is_error_signaled (instance))
         {
             context_signal_error (instance);
-            return;
+            return LEX_REPLACEMENT_LIST_RESULT_REGULAR;
         }
 
 #define APPEND_TOKEN_TO_LIST(ITEM)                                                                                     \
@@ -1680,9 +1698,27 @@ static void lex_replacement_list (struct context_t *instance,
             context_execution_error (instance, tokenization_state,
                                      "Encountered preprocessor directive while lexing replacement list. Shouldn't be "
                                      "possible at all, can be an internal error.");
-            return;
+            return LEX_REPLACEMENT_LIST_RESULT_REGULAR;
 
         case TOKEN_TYPE_IDENTIFIER:
+            if (current_token.identifier_kind == IDENTIFIER_KIND_CUSHION_PRESERVE)
+            {
+                if (first)
+                {
+                    context_execution_error (
+                        instance, tokenization_state,
+                        "Encountered __CUSHION_PRESERVE__ while lexing replacement list and it is not first "
+                        "replacement-list-significant token. When using __CUSHION_PRESERVE__ to avoid unwrapping "
+                        "macro, it must always be the first thing in the replacement list.");
+                    return LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+                }
+
+                return LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
+            }
+
+            SAVE_AND_APPEND_TOKEN_TO_LIST
+            break;
+
         case TOKEN_TYPE_PUNCTUATOR:
         case TOKEN_TYPE_NUMBER_INTEGER:
         case TOKEN_TYPE_NUMBER_FLOATING:
@@ -1708,6 +1744,7 @@ static void lex_replacement_list (struct context_t *instance,
     }
 
     *token_list_output = first;
+    return LEX_REPLACEMENT_LIST_RESULT_REGULAR;
 }
 
 enum lex_file_flags_t
@@ -2667,7 +2704,7 @@ static inline void lex_preprocessor_fixup_line (struct lexer_file_state_t *state
 
 static inline void lex_preprocessor_preserved_tail (
     struct lexer_file_state_t *state,
-    const struct token_t *preprocessor_token,
+    enum token_type_t preprocessor_token_type,
     // Macro node is required to properly paste function-line macro arguments if any.
     struct macro_node_t *macro_node_if_any)
 {
@@ -2677,7 +2714,7 @@ static inline void lex_preprocessor_preserved_tail (
         return;
     }
 
-    switch (preprocessor_token->type)
+    switch (preprocessor_token_type)
     {
     case TOKEN_TYPE_PREPROCESSOR_IF:
         context_output_null_terminated (state->instance, "#if ");
@@ -2725,7 +2762,7 @@ static inline void lex_preprocessor_preserved_tail (
     case TOKEN_TYPE_PREPROCESSOR_DEFINE:
     {
         context_output_null_terminated (state->instance, "#define ");
-        // We need this to properly paste function-like define back into code.
+        // We need this to properly paste everything back into code.
         assert (macro_node_if_any);
         context_output_null_terminated (state->instance, macro_node_if_any->name);
 
@@ -4002,9 +4039,10 @@ static void lex_preprocessor_if (struct lexer_file_state_t *state, const struct 
         return;
     }
 
+    const unsigned int start_line = state->tokenization.cursor_line;
     lex_do_not_skip_regular (state);
     struct token_t current_token;
-    lexer_file_state_pop_token (state, &current_token);
+    lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type == TOKEN_TYPE_IDENTIFIER &&
@@ -4020,7 +4058,12 @@ static void lex_preprocessor_if (struct lexer_file_state_t *state, const struct 
         node->line = state->tokenization.cursor_line;
         state->conditional_inclusion_node = node;
 
-        lex_preprocessor_preserved_tail (state, preprocessor_token, NULL);
+        if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u && start_line != state->tokenization.cursor_line)
+        {
+            lex_preprocessor_fixup_line (state);
+        }
+
+        lex_preprocessor_preserved_tail (state, preprocessor_token->type, NULL);
         lex_update_tokenization_flags (state);
         return;
     }
@@ -4033,7 +4076,6 @@ static void lex_preprocessor_if (struct lexer_file_state_t *state, const struct 
     };
 
     lexer_file_state_push_tokens (state, &push_first_token_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
-    unsigned int start_line = state->tokenization.cursor_line;
     const long long evaluation_result = lex_preprocessor_evaluate (state, LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_ROOT);
     LEX_WHEN_ERROR (return)
 
@@ -4133,7 +4175,7 @@ static unsigned int lex_preprocessor_else_is_transitively_preserved (struct lexe
 {
     if (state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_PRESERVED)
     {
-        lex_preprocessor_preserved_tail (state, preprocessor_token, NULL);
+        lex_preprocessor_preserved_tail (state, preprocessor_token->type, NULL);
         return 1u;
     }
 
@@ -4250,7 +4292,7 @@ static void lex_preprocessor_endif (struct lexer_file_state_t *state, const stru
 
     if (state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_PRESERVED)
     {
-        lex_preprocessor_preserved_tail (state, preprocessor_token, NULL);
+        lex_preprocessor_preserved_tail (state, preprocessor_token->type, NULL);
         return;
     }
 
@@ -4390,6 +4432,230 @@ static void lex_preprocessor_include (struct lexer_file_state_t *state)
         // If there were multiline comments, we need to fixup line.
         // Expected line is always start_line + 1, because we're read new line too.
         start_line + 1u != state->tokenization.cursor_line)
+    {
+        lex_preprocessor_fixup_line (state);
+    }
+
+    lex_update_tokenization_flags (state);
+}
+
+static void lex_preprocessor_define (struct lexer_file_state_t *state)
+{
+    const unsigned int start_line = state->tokenization.cursor_line;
+    lex_do_not_skip_regular (state);
+    struct token_t current_token;
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_IDENTIFIER)
+    {
+        context_execution_error (state->instance, &state->tokenization, "Expected identifier after #define.");
+        return;
+    }
+
+    switch (current_token.identifier_kind)
+    {
+    case IDENTIFIER_KIND_REGULAR:
+        break;
+
+    default:
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Reserved word is used as macro name, which is not supported by Cushion.");
+        return;
+    }
+
+    struct macro_node_t *node =
+        stack_group_allocator_allocate (&state->instance->allocator, sizeof (struct macro_node_t),
+                                        _Alignof (struct macro_node_t), ALLOCATION_CLASS_PERSISTENT);
+
+    const unsigned int name_length = current_token.end - current_token.begin;
+    char *macro_name = stack_group_allocator_allocate (&state->instance->allocator, name_length + 1u, _Alignof (char),
+                                                       ALLOCATION_CLASS_PERSISTENT);
+
+    memcpy (macro_name, current_token.begin, name_length);
+    macro_name[name_length] = '\0';
+    node->name = macro_name;
+    node->flags = MACRO_FLAG_NONE;
+    node->replacement_list_first = NULL;
+    node->parameters_first = NULL;
+
+    lexer_file_state_pop_token (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    switch (current_token.type)
+    {
+    case TOKEN_TYPE_PUNCTUATOR:
+    {
+        node->flags |= MACRO_FLAG_FUNCTION;
+        struct macro_parameter_node_t *parameters_last = NULL;
+        unsigned int lexing_arguments = 1u;
+
+        while (lexing_arguments)
+        {
+            lex_skip_glue_and_comments (state, &current_token);
+            LEX_WHEN_ERROR (return)
+
+            switch (current_token.type)
+            {
+            case TOKEN_TYPE_IDENTIFIER:
+            {
+                struct macro_parameter_node_t *parameter = stack_group_allocator_allocate (
+                    &state->instance->allocator, sizeof (struct macro_parameter_node_t),
+                    _Alignof (struct macro_parameter_node_t), ALLOCATION_CLASS_PERSISTENT);
+
+                const unsigned int parameter_name_length = current_token.end - current_token.begin;
+                char *parameter_name =
+                    stack_group_allocator_allocate (&state->instance->allocator, parameter_name_length + 1u,
+                                                    _Alignof (char), ALLOCATION_CLASS_PERSISTENT);
+
+                memcpy (parameter_name, current_token.begin, parameter_name_length);
+                parameter_name[parameter_name_length] = '\0';
+
+                parameter->name = parameter_name;
+                parameter->next = NULL;
+
+                if (parameters_last)
+                {
+                    parameters_last->next = parameter;
+                }
+                else
+                {
+                    node->parameters_first = parameter;
+                }
+
+                parameters_last = parameter;
+
+                lex_skip_glue_and_comments (state, &current_token);
+                LEX_WHEN_ERROR (return)
+
+                if (current_token.type != TOKEN_TYPE_PUNCTUATOR ||
+                    current_token.punctuator_kind != PUNCTUATOR_KIND_COMMA)
+                {
+                    lexing_arguments = 0u;
+                }
+
+                break;
+            }
+
+            default:
+                lexing_arguments = 0u;
+                break;
+            }
+        }
+
+        if (current_token.type == TOKEN_TYPE_PUNCTUATOR && current_token.punctuator_kind == PUNCTUATOR_KIND_TRIPLE_DOT)
+        {
+            node->flags |= MACRO_FLAG_VARIADIC_PARAMETERS;
+            lex_skip_glue_and_comments (state, &current_token);
+            LEX_WHEN_ERROR (return)
+        }
+
+        if (current_token.type != TOKEN_TYPE_PUNCTUATOR &&
+            current_token.punctuator_kind == PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+        {
+            context_execution_error (state->instance, &state->tokenization,
+                                     "Expected \")\" or \",\" while reading macro parameter name list.");
+            return;
+        }
+
+        break;
+    }
+
+    case TOKEN_TYPE_NEW_LINE:
+    case TOKEN_TYPE_END_OF_FILE:
+        // No replacement list, go directly to registration.
+        goto register_macro;
+
+    case TOKEN_TYPE_GLUE:
+    case TOKEN_TYPE_COMMENT:
+        break;
+
+    default:
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Expected whitespaces, comments, \"(\", line end or file end after macro name.");
+        return;
+    }
+
+    // Lex replacement list.
+    enum lex_replacement_list_result_t lex_result =
+        lex_replacement_list (state->instance, &state->tokenization, &node->replacement_list_first);
+
+    switch (lex_result)
+    {
+    case LEX_REPLACEMENT_LIST_RESULT_REGULAR:
+        // Fixup line after reading the macro.
+        lex_preprocessor_fixup_line (state);
+        break;
+
+    case LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
+        if (start_line != state->tokenization.cursor_line)
+        {
+            // Fixup line if arguments and other things used line continuation.
+            lex_preprocessor_fixup_line (state);
+        }
+
+        node->flags |= MACRO_FLAG_PRESERVED;
+        lex_preprocessor_preserved_tail (state, TOKEN_TYPE_PREPROCESSOR_DEFINE, node);
+        break;
+    }
+
+register_macro:
+    // Register generated macro.
+    context_macro_add (state->instance, node);
+    lex_update_tokenization_flags (state);
+}
+
+static void lex_preprocessor_undef (struct lexer_file_state_t *state)
+{
+    unsigned int start_line = state->tokenization.cursor_line;
+    lex_do_not_skip_regular (state);
+    struct token_t current_token;
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_IDENTIFIER)
+    {
+        context_execution_error (state->instance, &state->tokenization, "Expected identifier after #undef.");
+        return;
+    }
+
+    struct macro_node_t *node = context_macro_search (state->instance, current_token.begin, current_token.end);
+    if (!node || (node->flags & MACRO_FLAG_PRESERVED))
+    {
+        // Preserve #undef as macro is either unknown or explicitly preserved.
+        if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+        {
+            if (start_line != state->tokenization.cursor_line)
+            {
+                lex_preprocessor_fixup_line (state);
+                start_line = state->tokenization.cursor_line;
+            }
+
+            context_output_null_terminated (state->instance, "#undef ");
+            context_output_sequence (state->instance, current_token.begin, current_token.end);
+            context_output_null_terminated (state->instance, "\n");
+        }
+
+        lex_preprocessor_expect_new_line (state);
+        LEX_WHEN_ERROR (return)
+
+        if (start_line + 1u != state->tokenization.cursor_line)
+        {
+            lex_preprocessor_fixup_line (state);
+        }
+
+        lex_update_tokenization_flags (state);
+        return;
+    }
+
+    context_macro_remove (state->instance, current_token.begin, current_token.end);
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        context_output_null_terminated (state->instance, "\n");
+    }
+
+    lex_preprocessor_expect_new_line (state);
+    if (start_line + 1u != state->tokenization.cursor_line)
     {
         lex_preprocessor_fixup_line (state);
     }
@@ -4667,6 +4933,7 @@ static void lex_file_from_handle (struct context_t *instance,
 
         // TODO: Do not forget about RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR while lexing preprocessor subsequences.
         //       Use lex_do_not_skip_regular.
+
         switch (current_token.type)
         {
         case TOKEN_TYPE_PREPROCESSOR_IF:
@@ -4720,7 +4987,7 @@ static void lex_file_from_handle (struct context_t *instance,
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                // TODO: Implement.
+                lex_preprocessor_define (state);
             }
 
             break;
@@ -4729,8 +4996,7 @@ static void lex_file_from_handle (struct context_t *instance,
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                context_macro_remove (NULL, NULL, NULL); // TODO: Just to mark function as used.
-                // TODO: Implement.
+                lex_preprocessor_undef (state);
             }
 
             break;
@@ -4888,7 +5154,7 @@ void cushion_context_configure_define (cushion_context_t context, const char *na
                                         _Alignof (struct macro_node_t), ALLOCATION_CLASS_PERSISTENT);
 
     new_node->name = name;
-    new_node->flags = 0u;
+    new_node->flags = MACRO_FLAG_NONE;
     new_node->value = value;
     new_node->parameters_first = NULL;
 
@@ -4956,7 +5222,9 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
             struct macro_node_t *next = macro_node->next;
             struct re2c_state_t tokenization_state;
             re2c_state_init_for_argument_string (&tokenization_state, macro_node->value);
-            lex_replacement_list (instance, &tokenization_state, &macro_node->replacement_list_first);
+
+            enum lex_replacement_list_result_t lex_result =
+                lex_replacement_list (instance, &tokenization_state, &macro_node->replacement_list_first);
 
             if (context_is_error_signaled (instance))
             {
@@ -4975,7 +5243,20 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
             }
             else
             {
-                context_macro_add (instance, macro_node);
+                switch (lex_result)
+                {
+                case LEX_REPLACEMENT_LIST_RESULT_REGULAR:
+                    context_macro_add (instance, macro_node);
+                    break;
+
+                case LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
+                    fprintf (stderr,
+                             "Encountered __CUSHION_PRESERVE__ while lexing macro \"%s\" from arguments, which is not "
+                             "supported.\n",
+                             macro_node->name);
+                    result = CUSHION_RESULT_FAILED_TO_LEX_CONFIGURED_DEFINES;
+                    break;
+                }
             }
 
             macro_node = next;
