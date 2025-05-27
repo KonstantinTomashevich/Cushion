@@ -534,7 +534,12 @@ enum re2c_tokenization_state_t
 {
     RE2C_TOKENIZATION_STATE_REGULAR = 0u,
     RE2C_TOKENIZATION_STATE_NEW_LINE,
+
+    /// \brief Include needs separate state as header path tokens can only be found there.
     RE2C_TOKENIZATION_STATE_INCLUDE,
+
+    /// \brief Line needs separate state as by standard even numbers that start from 0 must be parsed as decimals here.
+    RE2C_TOKENIZATION_STATE_LINE,
 };
 
 enum re2c_tokenization_flags_t
@@ -860,6 +865,9 @@ enum identifier_kind_t
 
     IDENTIFIER_KIND_VA_ARGS,
     IDENTIFIER_KIND_VA_OPT,
+
+    IDENTIFIER_KIND_FILE,
+    IDENTIFIER_KIND_LINE,
 
     IDENTIFIER_KIND_CUSHION_PRESERVE,
 
@@ -1287,6 +1295,9 @@ start_next_token:
          "CUSHION_STATEMENT_ACCUMULATOR_REFERENCE"
          { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE); }
 
+         "__FILE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_FILE); }
+         "__LINE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_LINE); }
+
          "defined" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_DEFINED); }
          "__has_include" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_HAS_INCLUDE); }
          "__has_embed" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (IDENTIFIER_KIND_HAS_EMBED); }
@@ -1374,8 +1385,12 @@ start_next_token:
              (long_long_integer_suffix? unsigned_integer_suffix) |
              (bit_precise_integer_suffix? unsigned_integer_suffix);
 
-         // Decimal integer number. Minus in front is not a part of literal per specification.
-         @marker_sub_begin [1-9] [0-9']* @marker_sub_end integer_suffix?
+         decimal_integer = @marker_sub_begin [1-9] [0-9']* @marker_sub_end;
+         octal_integer = "0" [oO]? @marker_sub_begin [0-7']+ @marker_sub_end;
+         hex_integer = "0" [xX] @marker_sub_begin [0-9a-fA-F']+ @marker_sub_end;
+         binary_integer = "0" [bB] @marker_sub_begin [01']+ @marker_sub_end;
+
+         decimal_integer integer_suffix?
          {
              if (tokenize_decimal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) != RESULT_OK)
              {
@@ -1386,9 +1401,13 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         // Octal integer number. Minus in front is not a part of literal per specification.
-         // And yes, historically just prepending zero is enough to make literal octal.
-         "0" [oO]? @marker_sub_begin [0-7']+ @marker_sub_end integer_suffix?
+         decimal_integer identifier
+         {
+             context_execution_error (instance, state, "Caught decimal integer with unknown suffix.");
+             return;
+         }
+
+         octal_integer integer_suffix?
          {
              if (tokenize_octal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) != RESULT_OK)
              {
@@ -1399,18 +1418,13 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         // Catch user errors when zero prefix made literal octal, but it is not actually octal.
-         "0" [0-9']+
+         octal_integer identifier
          {
-             context_execution_error (
-                 instance, state,
-                 "Caught octal (zero prefixed) integer literal that is not actually octal. "
-                 "Yes, by specification zero prefix is enough to make literal octal.");
+             context_execution_error (instance, state, "Caught octal integer with unknown suffix.");
              return;
          }
 
-         // Hexadecimal integer number. Minus in front is not a part of literal per specification.
-         "0" [xX] @marker_sub_begin [0-9a-fA-F']+ @marker_sub_end integer_suffix?
+         hex_integer integer_suffix?
          {
              if (tokenize_hex_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) != RESULT_OK)
              {
@@ -1421,8 +1435,13 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         // Binary integer number. Minus in front is not a part of literal per specification.
-         "0" [bB] @marker_sub_begin [01']+ @marker_sub_end integer_suffix?
+         hex_integer identifier
+         {
+             context_execution_error (instance, state, "Caught hex integer with unknown suffix.");
+             return;
+         }
+
+         binary_integer integer_suffix?
          {
              if (tokenize_binary_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) != RESULT_OK)
              {
@@ -1431,6 +1450,12 @@ start_next_token:
              }
 
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_NUMBER_INTEGER);
+         }
+
+         binary_integer identifier
+         {
+             context_execution_error (instance, state, "Caught binary integer with unknown suffix.");
+             return;
          }
 
          digit_sequence = [0-9] [0-9']*;
@@ -1552,7 +1577,12 @@ start_next_token:
 
          "define" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_DEFINE); }
          "undef" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_UNDEF); }
-         "line" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_LINE); }
+         "line"
+         {
+             state->state = RE2C_TOKENIZATION_STATE_LINE;
+             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_LINE);
+         }
+
          "pragma" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_PRAGMA); }
 
          // Fallthrough.
@@ -1614,12 +1644,51 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_HEADER_USER);
          }
 
-         "#" { goto new_line_preprocessor_found; }
          * { }
          $ { }
          */
 
-        // Nothing specific for the include statement found.
+        // Nothing specific for the include directive found.
+        goto regular_routine;
+    }
+
+    case RE2C_TOKENIZATION_STATE_LINE:
+    {
+        if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
+        {
+            goto skip_regular_routine;
+        }
+
+        /*!re2c
+         // Whitespaces and comments in line directive are just skipped.
+         whitespace+ { goto new_line_preprocessor_determine_type; }
+         multi_line_comment { goto new_line_preprocessor_determine_type; }
+
+         // Line number in format supported for #line by standard.
+         @marker_sub_begin [0-9]+ @marker_sub_end
+         {
+             if (tokenize_decimal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) != RESULT_OK)
+             {
+                 context_execution_error (instance, state, "Failed to line number for #line directive.");
+                 return;
+             }
+
+             PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_NUMBER_INTEGER);
+         }
+
+         // Unsupported number formats for #line.
+         "0" [oOxXbB]? @marker_sub_begin [0-9a-fA-F']+ @marker_sub_end
+         {
+             context_execution_error (instance, state,
+                     "Got line number in #line directive in format unsupported by standard.");
+             return;
+         }
+
+         * { }
+         $ { }
+         */
+
+        // Nothing specific for the line directive found.
         goto regular_routine;
     }
     }
@@ -2126,6 +2195,9 @@ static enum identifier_kind_t lex_relculate_identifier_kind (const char *begin, 
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR", IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_PUSH", IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_REFERENCE", IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE)
+
+    CHECK_KIND ("__FILE__", IDENTIFIER_KIND_FILE)
+    CHECK_KIND ("__LINE__", IDENTIFIER_KIND_LINE)
 
     CHECK_KIND ("defined", IDENTIFIER_KIND_DEFINED)
     CHECK_KIND ("__has_include", IDENTIFIER_KIND_HAS_INCLUDE)
@@ -3269,6 +3341,9 @@ static long long lex_preprocessor_evaluate_argument (struct lexer_file_state_t *
         {
             switch (current_token.identifier_kind)
             {
+            case IDENTIFIER_KIND_LINE:
+                return state->tokenization.cursor_line;
+
             case IDENTIFIER_KIND_DEFINED:
                 return lex_preprocessor_evaluate_defined (state);
 
@@ -4663,6 +4738,141 @@ static void lex_preprocessor_undef (struct lexer_file_state_t *state)
     lex_update_tokenization_flags (state);
 }
 
+static void lex_preprocessor_line (struct lexer_file_state_t *state)
+{
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        context_output_null_terminated (state->instance, "#line ");
+    }
+
+    lex_do_not_skip_regular (state);
+    struct token_t current_token;
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != TOKEN_TYPE_NUMBER_INTEGER)
+    {
+        context_execution_error (
+            state->instance, &state->tokenization,
+            "Expected integer line number after #line. Standard allows arbitrary preprocessor-evaluable expressions "
+            "for line number calculations, but it is not yet supported in Cushion as it is a rare case.");
+        return;
+    }
+
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        context_output_sequence (state->instance, current_token.begin, current_token.end);
+        context_output_null_terminated (state->instance, " ");
+    }
+
+    const unsigned long long line_number = current_token.unsigned_number_value;
+    if (line_number > UINT_MAX)
+    {
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Line number %llu is too big and is not supported.", line_number);
+        return;
+    }
+
+    char *new_file_name = NULL;
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    switch (current_token.type)
+    {
+    case TOKEN_TYPE_STRING_LITERAL:
+    {
+        if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+        {
+            context_output_sequence (state->instance, current_token.begin, current_token.end);
+        }
+
+        new_file_name = stack_group_allocator_allocate (
+            &state->instance->allocator, current_token.symbolic_literal.end - current_token.symbolic_literal.begin + 1u,
+            _Alignof (char), ALLOCATION_CLASS_TRANSIENT);
+
+        // Need to resolve escapes.
+        const char *cursor = current_token.symbolic_literal.begin;
+        char *file_name_output = new_file_name;
+
+        while (cursor < current_token.symbolic_literal.end)
+        {
+            if (*cursor == '\\')
+            {
+                if (cursor + 1u >= current_token.symbolic_literal.end)
+                {
+                    context_execution_error (state->instance, &state->tokenization,
+                                             "Encountered \"\\\" as the last symbol of string literal in #line.");
+                    return;
+                }
+
+                ++cursor;
+                switch (*cursor)
+                {
+                case '"':
+                case '\\':
+                    // Allowed to be escaped.
+                    break;
+
+                default:
+                    context_execution_error (state->instance, &state->tokenization,
+                                             "Encountered unsupported escape \"\\%c\" in #line file name, only "
+                                             "\"\\\\\" and \"\\\"\" are supported in that context.");
+                    return;
+                }
+            }
+
+            *file_name_output = *cursor;
+            ++file_name_output;
+            ++cursor;
+        }
+
+        *file_name_output = '\0';
+        lex_skip_glue_and_comments (state, &current_token);
+        LEX_WHEN_ERROR (return)
+
+        switch (current_token.type)
+        {
+        case TOKEN_TYPE_NEW_LINE:
+        case TOKEN_TYPE_END_OF_FILE:
+            // File not specified, allowed by standard.
+            break;
+
+        default:
+            context_execution_error (state->instance, &state->tokenization,
+                                     "Expected new line or file end after file name in #line directive.");
+            return;
+        }
+
+        break;
+    }
+
+    case TOKEN_TYPE_NEW_LINE:
+    case TOKEN_TYPE_END_OF_FILE:
+        // File not specified, allowed by standard.
+        break;
+
+    default:
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Expected file name literal or new line after line number in #line. Standard allows "
+                                 "arbitrary preprocessor-evaluable expressions for file name determination, but it is "
+                                 "not yet supported in Cushion as it is a rare case.");
+        return;
+    }
+
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        context_output_null_terminated (state->instance, "\n");
+    }
+
+    if (new_file_name)
+    {
+        state->tokenization.file_name = new_file_name;
+    }
+
+    state->tokenization.cursor_line = (unsigned int) line_number;
+    lex_update_tokenization_flags (state);
+}
+
 static inline void lex_skip_glue_comments_new_line (struct lexer_file_state_t *state, struct token_t *current_token)
 {
     while (lexer_file_state_should_continue (state))
@@ -4788,6 +4998,90 @@ static void lex_code_identifier (struct lexer_file_state_t *state, struct token_
 
     switch (current_token->identifier_kind)
     {
+    case IDENTIFIER_KIND_FILE:
+    {
+        const size_t file_name_length = strlen (state->tokenization.file_name);
+        char *formatted_file_name = stack_group_allocator_allocate (&state->instance->allocator, file_name_length + 3u,
+                                                                    _Alignof (char), ALLOCATION_CLASS_TRANSIENT);
+
+        formatted_file_name[0u] = '"';
+        memcpy (formatted_file_name + 1u, state->tokenization.file_name, file_name_length);
+        formatted_file_name[file_name_length - 2u] = '"';
+        formatted_file_name[file_name_length - 1u] = '\0';
+
+        struct token_list_item_t push_file_name_item = {
+            .next = NULL,
+            .token =
+                {
+                    .type = TOKEN_TYPE_STRING_LITERAL,
+                    .begin = formatted_file_name,
+                    .end = formatted_file_name + file_name_length + 2u,
+                    .symbolic_literal =
+                        {
+                            .encoding = TOKEN_SUBSEQUENCE_ENCODING_ORDINARY,
+                            .begin = formatted_file_name + 1u,
+                            .end = formatted_file_name + file_name_length + 1u,
+                        },
+                },
+        };
+
+        lexer_file_state_push_tokens (state, &push_file_name_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+        return;
+    }
+
+    case IDENTIFIER_KIND_LINE:
+    {
+        // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
+        unsigned int value = state->tokenization.cursor_line;
+        unsigned int string_length = 0u;
+
+        if (value > 0u)
+        {
+            while (value > 0u)
+            {
+                ++string_length;
+                value /= 10u;
+            }
+        }
+        else
+        {
+            string_length = 1u;
+        }
+
+        char *formatted_literal = stack_group_allocator_allocate (&state->instance->allocator, string_length + 1u,
+                                                                  _Alignof (char), ALLOCATION_CLASS_TRANSIENT);
+        formatted_literal[string_length] = '\0';
+
+        if (value > 0u)
+        {
+            char *cursor = formatted_literal + string_length - 1u;
+            while (value > 0u)
+            {
+                *cursor = (char) ('0' + (value % 10u));
+                --cursor;
+                value /= 10u;
+            }
+        }
+        else
+        {
+            formatted_literal[0u] = '0';
+        }
+
+        struct token_list_item_t push_file_line_item = {
+            .next = NULL,
+            .token =
+                {
+                    .type = TOKEN_TYPE_NUMBER_INTEGER,
+                    .begin = formatted_literal,
+                    .end = formatted_literal + string_length,
+                    .unsigned_number_value = state->tokenization.cursor_line,
+                },
+        };
+
+        lexer_file_state_push_tokens (state, &push_file_line_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+        return;
+    }
+
     case IDENTIFIER_KIND_CUSHION_PRESERVE:
         context_execution_error (state->instance, &state->tokenization,
                                  "Encountered cushion preserve keyword in unexpected context.");
@@ -4804,20 +5098,6 @@ static void lex_code_identifier (struct lexer_file_state_t *state, struct token_
 
     default:
         break;
-    }
-
-    if (current_token->identifier_kind == IDENTIFIER_KIND_CUSHION_PRESERVE)
-    {
-        context_execution_error (state->instance, &state->tokenization,
-                                 "Encountered cushion preserve keyword in unexpected context.");
-        return;
-    }
-
-    if (current_token->identifier_kind == IDENTIFIER_KIND_CUSHION_WRAPPED)
-    {
-        context_execution_error (state->instance, &state->tokenization,
-                                 "Encountered cushion wrapped keyword in unexpected context.");
-        return;
     }
 
     struct token_list_item_t *macro_tokens =
@@ -4926,14 +5206,6 @@ static void lex_file_from_handle (struct context_t *instance,
             context_output_null_terminated (instance, " ");
         }
 
-        // TODO: Currently conditional inclusion is calculated, but not really used.
-        //       Fix it after everything is set inplace.
-        //       Actually, it should be kind of automatically skipped through RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR.
-        //       So, maybe, no need to change anything?
-
-        // TODO: Do not forget about RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR while lexing preprocessor subsequences.
-        //       Use lex_do_not_skip_regular.
-
         switch (current_token.type)
         {
         case TOKEN_TYPE_PREPROCESSOR_IF:
@@ -5005,7 +5277,7 @@ static void lex_file_from_handle (struct context_t *instance,
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                // TODO: Implement. Proper line directive processing is necessary.
+                lex_preprocessor_line (state);
             }
 
             break;
