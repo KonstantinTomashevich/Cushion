@@ -7,6 +7,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+// We need to get absolute path for pragma once.
+#if defined(_WIN32) || defined(_WIN64)
+#    define CUSHION_PATH_MAX 4096
+#    include <windows.h>
+#    define CUSHION_GET_ABSOLUTE_PATH_WINDOWS
+#elif defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__))
+#    define CUSHION_PATH_MAX PATH_MAX
+#    define CUSHION_GET_ABSOLUTE_PATH_UNIX
+#else
+#    error "Cushion has no implementation for getting absolute path for #pragma once on this OS."
+#endif
+
 #include <cushion.h>
 
 // Common generic utility functions.
@@ -250,6 +262,7 @@ struct context_t
     struct include_node_t *includes_last;
 
     struct macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
+    struct pragma_once_file_node_t *pragma_once_buckets[CUSHION_PRAGMA_ONCE_BUCKETS];
 
     struct stack_group_allocator_t allocator;
 
@@ -321,6 +334,13 @@ struct macro_node_t
     struct macro_parameter_node_t *parameters_first;
 };
 
+struct pragma_once_file_node_t
+{
+    struct pragma_once_file_node_t *next;
+    unsigned int path_hash;
+    const char *path;
+};
+
 static inline void context_clean_configuration (struct context_t *instance)
 {
     instance->state_flags = 0u;
@@ -337,6 +357,11 @@ static inline void context_clean_configuration (struct context_t *instance)
     for (unsigned int index = 0u; index < CUSHION_MACRO_BUCKETS; ++index)
     {
         instance->macro_buckets[index] = NULL;
+    }
+
+    for (unsigned int index = 0u; index < CUSHION_PRAGMA_ONCE_BUCKETS; ++index)
+    {
+        instance->pragma_once_buckets[index] = NULL;
     }
 
     instance->unresolved_macros_first = NULL;
@@ -1820,6 +1845,7 @@ enum lex_file_flags_t
 {
     LEX_FILE_FLAG_NONE = 0u,
     LEX_FILE_FLAG_SCAN_ONLY = 1u << 0u,
+    LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE = 1u << 1u,
 };
 
 enum lexer_token_stack_item_flags_t
@@ -2974,10 +3000,8 @@ static inline void lex_preprocessor_preserved_tail (
             break;
 
         case TOKEN_TYPE_END_OF_FILE:
-            context_execution_error (state->instance, &state->tokenization,
-                                     "Encountered end of file while reading preserved preprocessor if.");
-            state->lexing = 0u;
-            break;
+            // Just return, nothing more to output, nothing to fixup.
+            return;
         }
     }
 }
@@ -4873,6 +4897,95 @@ static void lex_preprocessor_line (struct lexer_file_state_t *state)
     lex_update_tokenization_flags (state);
 }
 
+static void lex_preprocessor_pragma (struct lexer_file_state_t *state)
+{
+    lex_do_not_skip_regular (state);
+    struct token_t current_token;
+    lex_skip_glue_and_comments (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type == TOKEN_TYPE_IDENTIFIER && current_token.identifier_kind == IDENTIFIER_KIND_REGULAR &&
+        current_token.end - current_token.begin == sizeof ("once") - 1u &&
+        strncmp (current_token.begin, "once", sizeof ("once")) == 0)
+    {
+        if ((state->flags & LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE) == 0u)
+        {
+            state->flags |= LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE;
+            char absolute_path_buffer[CUSHION_PATH_MAX];
+
+#if defined(CUSHION_GET_ABSOLUTE_PATH_WINDOWS)
+            if (!GetFullPathName (state->file_name, CUSHION_PATH_MAX, absolute_path_buffer, NULL))
+            {
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Unable to convert path \"%s\" to absolute path.", absolute_path_buffer);
+                return;
+            }
+
+#elif defined(CUSHION_GET_ABSOLUTE_PATH_UNIX)
+            if (!realpath (state->file_name, absolute_path_buffer))
+            {
+                context_execution_error (state->instance, &state->tokenization,
+                                         "Unable to convert path \"%s\" to absolute path.", absolute_path_buffer);
+                return;
+            }
+#endif
+
+            const unsigned int path_hash = hash_djb2_null_terminated (absolute_path_buffer);
+            struct pragma_once_file_node_t *search_node =
+                state->instance->pragma_once_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS];
+
+            while (search_node)
+            {
+                if (search_node->path_hash == path_hash && strcmp (search_node->path, absolute_path_buffer) == 0)
+                {
+                    break;
+                }
+
+                search_node = search_node->next;
+            }
+
+            if (search_node)
+            {
+                // End the lexing normally as file was already processed.
+                state->lexing = 0u;
+                return;
+            }
+
+            struct pragma_once_file_node_t *new_node =
+                stack_group_allocator_allocate (&state->instance->allocator, sizeof (struct pragma_once_file_node_t),
+                                                _Alignof (struct pragma_once_file_node_t), ALLOCATION_CLASS_PERSISTENT);
+
+            const size_t path_length = strlen (absolute_path_buffer);
+            char *path_allocated =
+                stack_group_allocator_allocate (&state->instance->allocator, path_length + 1u,
+                                                _Alignof (struct pragma_once_file_node_t), ALLOCATION_CLASS_PERSISTENT);
+
+            memcpy (path_allocated, absolute_path_buffer, path_length + 1u);
+            new_node->path_hash = path_hash;
+            new_node->path = path_allocated;
+
+            new_node->next = state->instance->pragma_once_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS];
+            state->instance->pragma_once_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS] = new_node;
+        }
+
+        lex_preprocessor_expect_new_line (state);
+        LEX_WHEN_ERROR (return)
+
+        lex_preprocessor_fixup_line (state);
+        lex_update_tokenization_flags (state);
+        return;
+    }
+
+    struct token_list_item_t push_first_token_item = {
+        .next = NULL,
+        .token = current_token,
+    };
+
+    lexer_file_state_push_tokens (state, &push_first_token_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+    lex_preprocessor_preserved_tail (state, TOKEN_TYPE_PREPROCESSOR_PRAGMA, NULL);
+    lex_update_tokenization_flags (state);
+}
+
 static inline void lex_skip_glue_comments_new_line (struct lexer_file_state_t *state, struct token_t *current_token)
 {
     while (lexer_file_state_should_continue (state))
@@ -5286,7 +5399,7 @@ static void lex_file_from_handle (struct context_t *instance,
             if (!state->conditional_inclusion_node ||
                 state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED)
             {
-                // TODO: Implement. Check if next identifier is once and process it. Otherwise, preserve tail.
+                lex_preprocessor_pragma (state);
             }
 
             break;
