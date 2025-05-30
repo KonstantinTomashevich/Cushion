@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// We need to get absolute path for pragma once.
+// We need to get absolute path for proper line directives and proper pragma once.
 #if defined(_WIN32) || defined(_WIN64)
 #    define CUSHION_PATH_MAX 4096
 #    include <windows.h>
@@ -540,7 +540,7 @@ static inline void context_output_line_marker (struct context_t *instance, unsig
     {
         // TODO: Proper deferred output needed for the future when statement accumulators are added.
 
-        if (fprintf (instance->output, "#line %u \"%s\"\n", line, path) != 0)
+        if (fprintf (instance->output, "#line %u \"%s\"\n", line, path) == 0)
         {
             fprintf (stderr, "Failed to output preprocessed code.\n");
             context_signal_error (instance);
@@ -704,8 +704,14 @@ static enum result_t re2c_refill_buffer (struct context_t *instance, struct re2c
     const size_t shift = preserve_from - state->input_buffer;
     const size_t used = state->limit - state->token;
 
-    if (shift < 1u)
+    if (shift == 0u)
     {
+        if (used == 0u)
+        {
+            // Not a lexeme overflow, just end of file.
+            return RESULT_FAILED;
+        }
+
         context_execution_error (
             instance, state, "Encountered lexeme overflow, %s.",
             state->guardrail == preserve_from ? "guardrail is a culprit" : "guardrail was not used");
@@ -722,6 +728,11 @@ static enum result_t re2c_refill_buffer (struct context_t *instance, struct re2c
     if (state->guardrail)
     {
         state->guardrail -= shift;
+    }
+
+    if (state->saved)
+    {
+        state->saved -= shift;
     }
 
 #if !defined(_MSC_VER) || defined(__clang__)
@@ -753,6 +764,7 @@ static enum result_t re2c_refill_buffer (struct context_t *instance, struct re2c
     if (read == 0u)
     {
         // End of file, return non-zero code and re2c will process it properly.
+        *state->limit = '\0';
         return RESULT_FAILED;
     }
 
@@ -1235,16 +1247,16 @@ static void tokenization_next_token (struct context_t *instance, struct re2c_sta
      whitespace = [\x09\x0b\x0c\x0d\x20];
      backslash = [\x5c];
      identifier = id_start id_continue*;
-     multi_line_comment = "/" "*" (. | new_line)* "*" "/";
+     multi_line_comment = "/" "*" ([^*] | ("*" [^/]))* "*" "/";
      */
 
 start_next_token:
     state->token = state->cursor;
-    output->begin = state->token;
 
 #define PREPROCESSOR_EMIT_TOKEN(TOKEN)                                                                                 \
     re2c_clear_saved_cursor (state);                                                                                   \
     output->type = TOKEN;                                                                                              \
+    output->begin = state->token;                                                                                      \
     output->end = state->cursor;                                                                                       \
     return
 
@@ -1278,7 +1290,6 @@ start_next_token:
             // Separate routine for breezing through anything that is not a preprocessor directive.
         skip_regular_routine:
             state->token = state->cursor;
-            output->begin = state->token;
 
             /*!re2c
              new_line { state->state = RE2C_TOKENIZATION_STATE_NEW_LINE; goto start_next_token; }
@@ -1293,12 +1304,6 @@ start_next_token:
 
          "//" [^\n]* { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_COMMENT); }
          multi_line_comment { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_COMMENT); }
-
-         "/" "*" (. | new_line)*
-         {
-             context_execution_error (instance, state, "Encountered multiline comment that was never closed.");
-             return;
-         }
 
          new_line
          {
@@ -1578,10 +1583,12 @@ start_next_token:
         re2c_save_cursor (state);
 
     new_line_preprocessor_determine_type:
+        state->token = state->cursor;
+
         /*!re2c
          !use:check_unsupported_in_code;
 
-         // Whitespaces and comments prepending preprocessor command are just skipped..
+         // Whitespaces and comments prepending preprocessor command are just skipped.
          whitespace+ { goto new_line_preprocessor_determine_type; }
          multi_line_comment { goto new_line_preprocessor_determine_type; }
 
@@ -1596,7 +1603,7 @@ start_next_token:
 
          "include"
          {
-             state->state = RE2C_TOKENIZATION_STATE_REGULAR;
+             state->state = RE2C_TOKENIZATION_STATE_INCLUDE;
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_INCLUDE);
          }
 
@@ -1610,13 +1617,13 @@ start_next_token:
 
          "pragma" { PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_PRAGMA); }
 
-         // Fallthrough.
-         identifier { }
-         * { }
-         $ { }
+         identifier { goto new_line_preprocessor_do_not_care; }
+         * { goto new_line_preprocessor_do_not_care; }
+         $ { goto new_line_preprocessor_do_not_care; }
          */
 
         // This is a not preprocessor things that we care about. Just lex as hash and continue.
+    new_line_preprocessor_do_not_care:
         if (state->flags & RE2C_TOKENIZATION_FLAGS_SKIP_REGULAR)
         {
             // If we're skipping regulars, no need to output punctuator.
@@ -1634,10 +1641,11 @@ start_next_token:
 
         /*!re2c
          "#" { goto new_line_preprocessor_found; }
-         * { }
-         $ { }
+         * { goto new_line_check_for_preprocessor_no_preprocessor; }
+         $ { goto new_line_check_for_preprocessor_no_preprocessor; }
          */
 
+    new_line_check_for_preprocessor_no_preprocessor:
         re2c_restore_saved_cursor (state);
         // Nothing specific for new line found.
         goto regular_routine;
@@ -1650,10 +1658,13 @@ start_next_token:
             goto skip_regular_routine;
         }
 
+    include_routine:
+        state->token = state->cursor;
+
         /*!re2c
          // Whitespaces and comments prepending include path are just skipped.
-         whitespace+ { goto new_line_preprocessor_determine_type; }
-         multi_line_comment { goto new_line_preprocessor_determine_type; }
+         whitespace+ { goto include_routine; }
+         multi_line_comment { goto include_routine; }
 
          "<" @marker_sub_begin [^\n>]+ @marker_sub_end ">"
          {
@@ -1669,10 +1680,11 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (TOKEN_TYPE_PREPROCESSOR_HEADER_USER);
          }
 
-         * { }
-         $ { }
+         * { goto include_not_header_path; }
+         $ { goto include_not_header_path; }
          */
 
+    include_not_header_path:
         // Nothing specific for the include directive found.
         goto regular_routine;
     }
@@ -1684,10 +1696,13 @@ start_next_token:
             goto skip_regular_routine;
         }
 
+    line_routine:
+        state->token = state->cursor;
+
         /*!re2c
          // Whitespaces and comments in line directive are just skipped.
-         whitespace+ { goto new_line_preprocessor_determine_type; }
-         multi_line_comment { goto new_line_preprocessor_determine_type; }
+         whitespace+ { goto line_routine; }
+         multi_line_comment { goto line_routine; }
 
          // Line number in format supported for #line by standard.
          @marker_sub_begin [0-9]+ @marker_sub_end
@@ -1709,10 +1724,11 @@ start_next_token:
              return;
          }
 
-         * { }
-         $ { }
+         * { goto line_not_a_line_number; }
+         $ { goto line_not_a_line_number; }
          */
 
+    line_not_a_line_number:
         // Nothing specific for the line directive found.
         goto regular_routine;
     }
@@ -1898,8 +1914,8 @@ struct lexer_file_state_t
     struct lexer_token_stack_item_t *token_stack_top;
     struct lexer_conditional_inclusion_node_t *conditional_inclusion_node;
 
-    /// \brief File name in lexer always points to the actual file.
-    const char *file_name;
+    /// \brief File name in lexer always points to the actual file using absolute path.
+    char file_name[CUSHION_PATH_MAX];
 
     struct re2c_state_t tokenization;
 
@@ -1934,9 +1950,10 @@ static inline void lexer_file_state_push_tokens (struct lexer_file_state_t *stat
 static inline enum lexer_token_stack_item_flags_t lexer_file_state_pop_token (struct lexer_file_state_t *state,
                                                                               struct token_t *output)
 {
+    enum lexer_token_stack_item_flags_t flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE;
     if (state->token_stack_top)
     {
-        enum lexer_token_stack_item_flags_t flags = state->token_stack_top->flags;
+        flags = state->token_stack_top->flags;
         *output = state->token_stack_top->tokens_current->token;
         state->token_stack_top->tokens_current = state->token_stack_top->tokens_current->next;
 
@@ -1946,18 +1963,20 @@ static inline enum lexer_token_stack_item_flags_t lexer_file_state_pop_token (st
             state->token_stack_top = state->token_stack_top->previous;
         }
 
-        if (output->type == TOKEN_TYPE_END_OF_FILE)
-        {
-            // Process lexing stop on end of file internally for ease of use.
-            state->lexing = 0u;
-        }
-
-        return flags;
+        goto read_token;
     }
 
     // No more ready-to-use tokens from replacement lists or other sources, request next token from tokenizer.
     tokenization_next_token (state->instance, &state->tokenization, output);
-    return LEXER_TOKEN_STACK_ITEM_FLAG_NONE;
+
+read_token:
+    if (output->type == TOKEN_TYPE_END_OF_FILE)
+    {
+        // Process lexing stop on end of file internally for ease of use.
+        state->lexing = 0u;
+    }
+
+    return flags;
 }
 
 static inline void lexer_file_state_path_init (struct lexer_file_state_t *state, const char *data)
@@ -4911,32 +4930,14 @@ static void lex_preprocessor_pragma (struct lexer_file_state_t *state)
         if ((state->flags & LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE) == 0u)
         {
             state->flags |= LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE;
-            char absolute_path_buffer[CUSHION_PATH_MAX];
+            const unsigned int path_hash = hash_djb2_null_terminated (state->file_name);
 
-#if defined(CUSHION_GET_ABSOLUTE_PATH_WINDOWS)
-            if (!GetFullPathName (state->file_name, CUSHION_PATH_MAX, absolute_path_buffer, NULL))
-            {
-                context_execution_error (state->instance, &state->tokenization,
-                                         "Unable to convert path \"%s\" to absolute path.", absolute_path_buffer);
-                return;
-            }
-
-#elif defined(CUSHION_GET_ABSOLUTE_PATH_UNIX)
-            if (!realpath (state->file_name, absolute_path_buffer))
-            {
-                context_execution_error (state->instance, &state->tokenization,
-                                         "Unable to convert path \"%s\" to absolute path.", absolute_path_buffer);
-                return;
-            }
-#endif
-
-            const unsigned int path_hash = hash_djb2_null_terminated (absolute_path_buffer);
             struct pragma_once_file_node_t *search_node =
                 state->instance->pragma_once_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS];
 
             while (search_node)
             {
-                if (search_node->path_hash == path_hash && strcmp (search_node->path, absolute_path_buffer) == 0)
+                if (search_node->path_hash == path_hash && strcmp (search_node->path, state->file_name) == 0)
                 {
                     break;
                 }
@@ -4955,12 +4956,12 @@ static void lex_preprocessor_pragma (struct lexer_file_state_t *state)
                 stack_group_allocator_allocate (&state->instance->allocator, sizeof (struct pragma_once_file_node_t),
                                                 _Alignof (struct pragma_once_file_node_t), ALLOCATION_CLASS_PERSISTENT);
 
-            const size_t path_length = strlen (absolute_path_buffer);
+            const size_t path_length = strlen (state->file_name);
             char *path_allocated =
                 stack_group_allocator_allocate (&state->instance->allocator, path_length + 1u,
                                                 _Alignof (struct pragma_once_file_node_t), ALLOCATION_CLASS_PERSISTENT);
 
-            memcpy (path_allocated, absolute_path_buffer, path_length + 1u);
+            memcpy (path_allocated, state->file_name, path_length + 1u);
             new_node->path_hash = path_hash;
             new_node->path = path_allocated;
 
@@ -5278,7 +5279,6 @@ static void lex_file_from_handle (struct context_t *instance,
                                   const char *path,
                                   enum lex_file_flags_t flags)
 {
-    context_output_line_marker (instance, 1u, path);
     struct stack_group_allocator_transient_marker_t allocation_marker =
         stack_group_allocator_get_transient_marker (&instance->allocator);
 
@@ -5291,9 +5291,31 @@ static void lex_file_from_handle (struct context_t *instance,
     state->instance = instance;
     state->token_stack_top = NULL;
     state->conditional_inclusion_node = NULL;
-    state->file_name = path;
 
-    re2c_state_init_for_file (&state->tokenization, path, input_file);
+    // We need to always convert file path to absolute in order to have proper line directives everywhere.
+#if defined(CUSHION_GET_ABSOLUTE_PATH_WINDOWS)
+    if (!GetFullPathName (path, CUSHION_PATH_MAX, state->file_name, NULL))
+    {
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Unable to convert path \"%s\" to absolute path.", path);
+
+        stack_group_allocator_reset_transient (&instance->allocator, allocation_marker);
+        return;
+    }
+
+#elif defined(CUSHION_GET_ABSOLUTE_PATH_UNIX)
+    if (!realpath (path, state->file_name))
+    {
+        context_execution_error (state->instance, &state->tokenization,
+                                 "Unable to convert path \"%s\" to absolute path.", path);
+
+        stack_group_allocator_reset_transient (&instance->allocator, allocation_marker);
+        return;
+    }
+#endif
+
+    context_output_line_marker (instance, 1u, state->file_name);
+    re2c_state_init_for_file (&state->tokenization, state->file_name, input_file);
     lex_update_tokenization_flags (state);
 
     struct token_t current_token;
@@ -5691,3 +5713,5 @@ void cushion_context_destroy (cushion_context_t context)
     stack_group_allocator_shutdown (&instance->allocator);
     free (instance);
 }
+
+// TODO: Add support for depfiles later.
