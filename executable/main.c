@@ -30,7 +30,6 @@ static const char help_message[] =
     "                           statement-accumulator    Support for statement accumulator extension.\n"
     "\n"
     "    --options          Any argument after this one is option. Supported:\n"
-    "                           keep-comments                Comments will not be removed from output.\n"
     "                           forbid-macro-redefinition    Ignore macro redefinitions and print error\n"
     "                                                        when one is encountered.\n"
     "\n"
