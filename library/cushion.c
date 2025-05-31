@@ -1084,8 +1084,8 @@ static inline struct token_list_item_t *save_token_to_memory (struct context_t *
 
     case TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
     case TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
-        target->token.header_path.begin = target->token.header_path.begin + (token->header_path.begin - token->begin);
-        target->token.header_path.end = target->token.header_path.begin + (token->header_path.end - token->end);
+        target->token.header_path.begin = target->token.begin + (token->header_path.begin - token->begin);
+        target->token.header_path.end = target->token.begin + (token->header_path.end - token->begin);
         break;
 
     case TOKEN_TYPE_IDENTIFIER:
@@ -1103,10 +1103,8 @@ static inline struct token_list_item_t *save_token_to_memory (struct context_t *
     case TOKEN_TYPE_CHARACTER_LITERAL:
     case TOKEN_TYPE_STRING_LITERAL:
         target->token.symbolic_literal.encoding = token->symbolic_literal.encoding;
-        target->token.symbolic_literal.begin =
-            target->token.symbolic_literal.begin + (token->symbolic_literal.begin - token->begin);
-        target->token.symbolic_literal.end =
-            target->token.symbolic_literal.begin + (token->symbolic_literal.end - token->end);
+        target->token.symbolic_literal.begin = target->token.begin + (token->symbolic_literal.begin - token->begin);
+        target->token.symbolic_literal.end = target->token.begin + (token->symbolic_literal.end - token->begin);
         break;
     }
 
@@ -1239,8 +1237,8 @@ static enum result_t tokenize_binary_value (const char *begin, const char *end, 
 
 static void tokenization_next_token (struct context_t *instance, struct re2c_state_t *state, struct token_t *output)
 {
-    const char *marker_sub_begin;
-    const char *marker_sub_end;
+    const char *marker_sub_begin = NULL;
+    const char *marker_sub_end = NULL;
 
     /*!re2c
      new_line = [\x0d]? [\x0a];
@@ -1415,7 +1413,7 @@ start_next_token:
              (long_long_integer_suffix? unsigned_integer_suffix) |
              (bit_precise_integer_suffix? unsigned_integer_suffix);
 
-         decimal_integer = @marker_sub_begin [1-9] [0-9']* @marker_sub_end;
+         decimal_integer = @marker_sub_begin ("0" | ([1-9] [0-9']*)) @marker_sub_end;
          octal_integer = "0" [oO]? @marker_sub_begin [0-7']+ @marker_sub_end;
          hex_integer = "0" [xX] @marker_sub_begin [0-9a-fA-F']+ @marker_sub_end;
          binary_integer = "0" [bB] @marker_sub_begin [01']+ @marker_sub_end;
@@ -1888,7 +1886,7 @@ enum lexer_conditional_inclusion_flags_t
 {
     CONDITIONAL_INCLUSION_FLAGS_NONE = 0u,
     CONDITIONAL_INCLUSION_FLAGS_WAS_INCLUDED = 1u << 0u,
-    CONDITIONAL_INCLUSION_FLAGS_HAD_PLAIN_ELSE = 1u << 0u,
+    CONDITIONAL_INCLUSION_FLAGS_HAD_PLAIN_ELSE = 1u << 1u,
 };
 
 struct lexer_conditional_inclusion_node_t
@@ -2080,7 +2078,6 @@ static unsigned int lex_calculate_stringized_internal_size (struct token_list_it
             if (token->token.type == TOKEN_TYPE_STRING_LITERAL)
             {
                 size += 2u; // Two more character for escaping double quotes.
-                break;
             }
 
             // By the standard, every "\", even from scape sequence, should be added as "\\".
@@ -2405,7 +2402,12 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
                     }
                 }
 
-                macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token);
+                if (first_variadic_argument)
+                {
+                    // Add token inside __VA_OPT__ only if there are any variadic arguments.
+                    macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token);
+                }
+
                 context->current_token = context->current_token->next;
             }
         }
@@ -2608,6 +2610,7 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                     while (current_argument)
                     {
                         output = lex_write_stringized_internal_tokens (current_argument->tokens_first, output);
+                        assert (output <= stringized_token.symbolic_literal.end);
                         current_argument = current_argument->next;
 
                         if (current_argument)
@@ -2666,9 +2669,13 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
 
                 stringized_token.symbolic_literal.begin = stringized_token.begin + 1u;
                 stringized_token.symbolic_literal.end = stringized_token.end - 1u;
-                lex_write_stringized_internal_tokens (found_argument->tokens_first,
-                                                      (char *) stringized_token.symbolic_literal.begin);
+#if !defined(NDEBUG)
+                const char *output_end =
+#endif
+                    lex_write_stringized_internal_tokens (found_argument->tokens_first,
+                                                          (char *) stringized_token.symbolic_literal.begin);
 
+                assert (output_end <= stringized_token.symbolic_literal.end);
                 *(char *) stringized_token.begin = '"';
                 *(char *) stringized_token.symbolic_literal.end = '"';
                 macro_replacement_token_list_append (state, &context.result, &stringized_token);
@@ -2713,28 +2720,38 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                         break;
                     }
 
-                    if (context.current_token->token.type != TOKEN_TYPE_IDENTIFIER)
-                    {
-                        context_execution_error (state->instance, &state->tokenization,
-                                                 "Encountered \"##\" operator before non-identifier token, which is "
-                                                 "currently not supported by Cushion (but possible in standard).");
-                        break;
-                    }
+#define CHECK_APPENDED_TOKEN_TYPE(TYPE)                                                                                \
+    switch (TYPE)                                                                                                      \
+    {                                                                                                                  \
+    case TOKEN_TYPE_IDENTIFIER:                                                                                        \
+    case TOKEN_TYPE_NUMBER_INTEGER:                                                                                    \
+        /* We know how to append that to identifier. */                                                                \
+        break;                                                                                                         \
+                                                                                                                       \
+    default:                                                                                                           \
+        context_execution_error (                                                                                      \
+            state->instance, &state->tokenization,                                                                     \
+            "Encountered \"##\" operator before token which is not an identifier and not an integer, "                 \
+            "which is currently not supported by Cushion (but possible in standard).");                                \
+        break;                                                                                                         \
+    }                                                                                                                  \
+                                                                                                                       \
+    if (context_is_error_signaled (state->instance))                                                                   \
+    {                                                                                                                  \
+        break;                                                                                                         \
+    }
 
+                    CHECK_APPENDED_TOKEN_TYPE (context.current_token->token.type)
                     macro_replacement_context_process_identifier_into_sub_list (state, &context);
+                    
                     if (!context.sub_list.first)
                     {
                         // Empty sub list, check next identifier.
                         continue;
                     }
 
-                    if (context.sub_list.first->token.type != TOKEN_TYPE_IDENTIFIER)
-                    {
-                        context_execution_error (state->instance, &state->tokenization,
-                                                 "Encountered \"##\" operator before non-identifier token, which is "
-                                                 "currently not supported by Cushion (but possible in standard).");
-                        break;
-                    }
+                    CHECK_APPENDED_TOKEN_TYPE (context.sub_list.first->token.type)
+#undef CHECK_APPENDED_TOKEN_TYPE
 
                     unsigned int base_identifier_length =
                         context.result.last->token.end - context.result.last->token.begin;
@@ -3037,9 +3054,6 @@ static struct token_list_item_t *lex_replace_identifier_if_macro (
         return NULL;
     }
 
-    struct token_list_item_t *result_tokens_first = NULL;
-    struct token_list_item_t *result_tokens_last = NULL;
-
     struct lex_macro_argument_t *arguments_first = NULL;
     struct lex_macro_argument_t *arguments_last = NULL;
 
@@ -3238,17 +3252,7 @@ static struct token_list_item_t *lex_replace_identifier_if_macro (
         }
     }
 
-    struct token_list_item_t *replacement = lex_do_macro_replacement (state, macro, arguments_first);
-    if (result_tokens_last)
-    {
-        result_tokens_first = replacement;
-    }
-    else
-    {
-        result_tokens_last->next = replacement;
-    }
-
-    return result_tokens_first;
+    return lex_do_macro_replacement (state, macro, arguments_first);
 }
 
 enum lex_preprocessor_sub_expression_type_t
@@ -3353,7 +3357,7 @@ static long long lex_preprocessor_evaluate_argument (struct lexer_file_state_t *
                                                      enum lex_preprocessor_sub_expression_type_t sub_expression_type)
 {
     struct token_t current_token;
-    while (!lexer_file_state_should_continue (state))
+    while (lexer_file_state_should_continue (state))
     {
         lexer_file_state_pop_token (state, &current_token);
         LEX_WHEN_ERROR (break)
@@ -4371,6 +4375,7 @@ static void lex_preprocessor_elifdef (struct lexer_file_state_t *state,
         state->conditional_inclusion_node,
         check_result ? CONDITIONAL_INCLUSION_STATE_INCLUDED : CONDITIONAL_INCLUSION_STATE_EXCLUDED);
     state->conditional_inclusion_node->line = start_line;
+    state->conditional_inclusion_node->flags |= CONDITIONAL_INCLUSION_FLAGS_HAD_PLAIN_ELSE;
 
     lex_preprocessor_fixup_line (state);
     lex_update_tokenization_flags (state);
@@ -5329,7 +5334,7 @@ static void lex_file_from_handle (struct context_t *instance,
             current_token_flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT;
         enum token_type_t previous_type = current_token.type;
 
-        lexer_file_state_pop_token (state, &current_token);
+        current_token_flags = lexer_file_state_pop_token (state, &current_token);
         if (context_is_error_signaled (instance))
         {
             break;

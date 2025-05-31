@@ -1,0 +1,82 @@
+#!/usr/bin/perl
+
+# Wrapper for launching cushion test scenarios and checking the execution results.
+
+use strict;
+use warnings;
+use Cwd 'abs_path';
+use Cwd 'getcwd';
+use File::Basename;
+
+my $executable = shift or die "Expected executable path.";
+my $test_name = shift or die "Expected test name.";
+my @other_args = @ARGV;
+my $test_directory = abs_path dirname $0;
+
+my $test_source = $test_directory . "/source/" . $test_name . ".c";
+my $test_expectation = $test_directory . "/expectation/" . $test_name . ".c";
+my $test_result = getcwd . "/" . $test_name . ".c";
+
+my $include_full = $test_directory . "/include";
+my $include_scan_only = $test_directory . "/include_scan_only";
+
+my @test_command_list = (
+    $executable,
+    "--options",
+    "forbid-macro-redefinition",
+    "--input",
+    $test_source,
+    "--output",
+    $test_result,
+    "--include-full",
+    $include_full,
+    "--include-scan",
+    $include_scan_only,
+);
+
+push(@test_command_list, @other_args);
+
+print "Test environment:\n";
+print "    Executable: " . $executable . "\n";
+print "    Test directory: " . $test_directory . "\n";
+print "    Test name: " . $test_name . "\n";
+print "    Test source: " . $test_source . "\n";
+print "    Test expectation: " . $test_expectation . "\n";
+print "    Test result: " . $test_result . "\n";
+print "    Include (full): " . $include_full . "\n";
+print "    Include (scan only): " . $include_scan_only . "\n";
+print "    Additional arguments: " . (join " ", @other_args) . "\n";
+print "    Full command: " . (join " ", @test_command_list) . "\n";
+
+print "\nExecuting test...\n\n";
+(system @test_command_list) == 0 or die "\nTest execution failed.\n";
+print "Execution done...\n\n";
+
+print "Comparing with expectation...\n\n";
+open my $result_handle, '<', $test_result or die "Failed to open test result.";
+open my $expectation_handle, '<', $test_expectation or die "Failed to open test expectation.";
+
+while (1) {
+    my $result_line = <$result_handle>;
+    my $expectation_line = <$expectation_handle>;
+
+    last unless defined $result_line || defined $expectation_line;
+    die "Result has less lines than expectation." unless defined $result_line;
+    die "Result has more lines than expectation." unless defined $expectation_line;
+
+    if ($result_line =~ /#line ([0-9]+) \"$test_directory\/([a-z0-9_\.\/\\]+)\"/) {
+        # Replace absolute line directive with repository localized line directive that is stored in expectation.
+        $result_line = "#line " . $1 . " \"" . $2 . "\"\n";
+    }
+
+    if ($result_line ne $expectation_line) {
+        print "Line #$. is different in result and expectation.\n";
+        print "    Result     : $result_line";
+        print "    Expectation: $expectation_line";
+        die "Found difference in result and expectation."
+    }
+}
+
+close $result_handle;
+close $expectation_handle;
+print "Matched with expectation. Test passed.\n";

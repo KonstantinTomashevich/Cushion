@@ -96,6 +96,7 @@ add_subdirectory (executable)
 add_subdirectory (library)
 
 if (CUSHION_TEST)
+    enable_testing ()
     add_subdirectory (test)
 endif ()
 

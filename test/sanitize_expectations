@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+# Script for sanitizing #line directives in expectation files: 
+# it replaces real paths with paths local to test directory.
+# It is needed for proper version control and also not to leak details of local development setups.
+
+use strict;
+use warnings;
+use Cwd 'abs_path';
+use File::Basename;
+
+my $test_directory = abs_path dirname $0;
+my @files = <$test_directory/expectation/*>;
+
+print $test_directory . "\n";
+
+foreach my $file (@files) {
+    print "Sanitizing #line directives in $file...\n";
+    my $backup_file = $file . ".backup";
+    rename $file, $backup_file or die "Failed to input file to backup file: $!";
+    
+    open my $in_handle, '<', $backup_file or die "Failed to open input file for read: $!";
+    open my $out_handle, '>', $file or die "Failed to open output file for write: $!";
+
+    while (<$in_handle>) {
+        if (/#line ([0-9]+) \"$test_directory\/([a-z0-9_\.\/\\]+)\"/) {
+            print $out_handle "#line " . $1 . " \"" . $2 . "\"\n";
+        }
+        else {
+            print $out_handle $_;
+        }
+    }
+
+    close $in_handle;
+    close $out_handle;
+    unlink $backup_file or die "Failed to unlink backup file: $!";
+}
