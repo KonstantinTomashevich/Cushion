@@ -687,7 +687,7 @@ static enum result_t re2c_refill_buffer (struct context_t *instance, struct re2c
     if (!state->input_file_optional)
     {
         // No file -> no refill, it is that simple.
-        return RESULT_OK;
+        return RESULT_FAILED;
     }
 
     const char *preserve_from = state->token;
@@ -2438,7 +2438,7 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
             }
         }
 
-        if (found_argument)
+        if (found_parameter && found_argument)
         {
             struct token_list_item_t *argument_token = found_argument->tokens_first;
             while (argument_token)
@@ -2602,8 +2602,10 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                     stringized_token.end = stringized_token.begin + stringized_size;
                     *(char *) stringized_token.end = '\0';
 
+                    stringized_token.symbolic_literal.encoding = TOKEN_SUBSEQUENCE_ENCODING_ORDINARY;
                     stringized_token.symbolic_literal.begin = stringized_token.begin + 1u;
                     stringized_token.symbolic_literal.end = stringized_token.end - 1u;
+
                     char *output = (char *) stringized_token.symbolic_literal.begin;
                     current_argument = first_variadic_argument;
 
@@ -2667,8 +2669,10 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
                 stringized_token.end = stringized_token.begin + stringized_size;
                 *(char *) stringized_token.end = '\0';
 
+                stringized_token.symbolic_literal.encoding = TOKEN_SUBSEQUENCE_ENCODING_ORDINARY;
                 stringized_token.symbolic_literal.begin = stringized_token.begin + 1u;
                 stringized_token.symbolic_literal.end = stringized_token.end - 1u;
+
 #if !defined(NDEBUG)
                 const char *output_end =
 #endif
@@ -2743,7 +2747,7 @@ static struct token_list_item_t *lex_do_macro_replacement (struct lexer_file_sta
 
                     CHECK_APPENDED_TOKEN_TYPE (context.current_token->token.type)
                     macro_replacement_context_process_identifier_into_sub_list (state, &context);
-                    
+
                     if (!context.sub_list.first)
                     {
                         // Empty sub list, check next identifier.
@@ -5565,9 +5569,23 @@ void cushion_context_configure_define (cushion_context_t context, const char *na
         stack_group_allocator_allocate (&instance->allocator, sizeof (struct macro_node_t),
                                         _Alignof (struct macro_node_t), ALLOCATION_CLASS_PERSISTENT);
 
-    new_node->name = name;
+    const size_t name_length = strlen (name);
+    char *name_copy = stack_group_allocator_allocate (&instance->allocator, name_length + 1u, _Alignof (char),
+                                                      ALLOCATION_CLASS_PERSISTENT);
+    
+    memcpy (name_copy, name, name_length);
+    name_copy[name_length] = '\0';
+    
+    const size_t value_length = strlen (value);
+    char *value_copy = stack_group_allocator_allocate (&instance->allocator, value_length + 1u, _Alignof (char),
+                                                      ALLOCATION_CLASS_PERSISTENT);
+    
+    memcpy (value_copy, value, value_length);
+    value_copy[value_length] = '\0';
+
+    new_node->name = name_copy;
     new_node->flags = MACRO_FLAG_NONE;
-    new_node->value = value;
+    new_node->value = value_copy;
     new_node->parameters_first = NULL;
 
     new_node->next = instance->unresolved_macros_first;

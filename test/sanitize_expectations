@@ -17,7 +17,7 @@ print $test_directory . "\n";
 foreach my $file (@files) {
     print "Sanitizing #line directives in $file...\n";
     my $backup_file = $file . ".backup";
-    rename $file, $backup_file or die "Failed to input file to backup file: $!";
+    rename $file, $backup_file or die "Failed to rename input file to backup file: $!";
     
     open my $in_handle, '<', $backup_file or die "Failed to open input file for read: $!";
     open my $out_handle, '>', $file or die "Failed to open output file for write: $!";

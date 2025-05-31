@@ -6,7 +6,7 @@ Cushion is a **partial** C preprocessor for softening the code before passing it
 > Cushion is still in early development and this readme mostly describes intentions and plans, 
 > not actual implementation as of now, unfortunately.
 
-> > **Warning:**
+> **Warning:**
 > Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
 > creating issues.
 
