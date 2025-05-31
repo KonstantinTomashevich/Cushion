@@ -1,7 +1,7 @@
 #line 1 "source/comments_trivial.c"
  
 #include <stdio.h>
-#line 4 "source/comments_trivial.c"
+
 
 #line 9 "source/comments_trivial.c"
 

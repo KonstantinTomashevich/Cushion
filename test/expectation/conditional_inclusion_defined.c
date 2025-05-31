@@ -1,6 +1,7 @@
 #line 1 "source/conditional_inclusion_defined.c"
 #include <stdio.h>
-#line 3 "source/conditional_inclusion_defined.c"
+
+
 
 int main (int argc, char **argv)
 {

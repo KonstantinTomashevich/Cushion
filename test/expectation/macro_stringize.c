@@ -1,6 +1,6 @@
 #line 1 "source/macro_stringize.c"
 #include <stdio.h>
-#line 3 "source/macro_stringize.c"
+
 #line 4 "source/macro_stringize.c"
 #line 5 "source/macro_stringize.c"
 

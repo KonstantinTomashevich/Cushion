@@ -1,6 +1,6 @@
 #line 1 "source/conditional_inclusion_evaluate_integer.c"
 #include <stdio.h>
-#line 3 "source/conditional_inclusion_evaluate_integer.c"
+
 int main (int argc, char **argv)
 {
 #line 6 "source/conditional_inclusion_evaluate_integer.c"

@@ -1,6 +1,6 @@
 #line 1 "source/macro_concatenate.c"
 #include <stdio.h>
-#line 3 "source/macro_concatenate.c"
+
 #line 4 "source/macro_concatenate.c"
 
 int main (int argc, char **argv)

@@ -1,6 +1,6 @@
 #line 1 "source/macro_preserve.c"
 #include <stdio.h>
-#line 3 "source/macro_preserve.c"
+
 #define ENTRY_FUNCTION  int main (int argc, char **argv)
 #line 4 "source/macro_preserve.c"
 #define EXIT(CODE)  \

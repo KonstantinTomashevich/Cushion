@@ -444,7 +444,9 @@ static inline unsigned int context_has_option (struct context_t *instance, enum 
     return instance->options & (1u << option);
 }
 
-static void context_macro_add (struct context_t *instance, struct macro_node_t *node)
+static void context_macro_add (struct context_t *instance,
+                               struct macro_node_t *node,
+                               struct re2c_state_t *tokenization_state_for_logging)
 {
     node->name_hash = hash_djb2_null_terminated (node->name);
     // To have consistent behavior, calculate parameter hashes here too.
@@ -465,7 +467,8 @@ static void context_macro_add (struct context_t *instance, struct macro_node_t *
         if (context_has_option (instance, CUSHION_OPTION_FORBID_MACRO_REDEFINITION) &&
             (instance->state_flags & CONTEXT_STATE_FLAG_EXECUTION))
         {
-            context_execution_error (instance, NULL, "Encountered macro \"%s\" redefinition.", node->name);
+            context_execution_error (instance, tokenization_state_for_logging, "Encountered macro \"%s\" redefinition.",
+                                     node->name);
         }
         else
         {
@@ -1656,6 +1659,7 @@ start_next_token:
             goto skip_regular_routine;
         }
 
+        re2c_save_cursor (state);
     include_routine:
         state->token = state->cursor;
 
@@ -1684,6 +1688,7 @@ start_next_token:
 
     include_not_header_path:
         // Nothing specific for the include directive found.
+        re2c_restore_saved_cursor (state);
         goto regular_routine;
     }
 
@@ -1694,6 +1699,7 @@ start_next_token:
             goto skip_regular_routine;
         }
 
+        re2c_save_cursor (state);
     line_routine:
         state->token = state->cursor;
 
@@ -1728,6 +1734,7 @@ start_next_token:
 
     line_not_a_line_number:
         // Nothing specific for the line directive found.
+        re2c_restore_saved_cursor (state);
         goto regular_routine;
     }
     }
@@ -4456,17 +4463,29 @@ static unsigned int lex_preprocessor_try_include (struct lexer_file_state_t *sta
         return 0u;
     }
 
-    // By default, we inherit flags and add more flags on top if needed.
-    enum lex_file_flags_t flags = state->flags;
-
-    switch (include_node->type)
+    enum lex_file_flags_t flags = LEX_FILE_FLAG_NONE;
+    if (include_node)
     {
-    case INCLUDE_TYPE_FULL:
-        break;
+        switch (include_node->type)
+        {
+        case INCLUDE_TYPE_FULL:
+            if (state->flags & LEX_FILE_FLAG_SCAN_ONLY)
+            {
+                context_execution_error (
+                    state->instance, &state->tokenization,
+                    "Include \"%s\" points to full include directory, but it is done from file which is under scan "
+                    "only directory. It is considered an error as it makes handling includes much more complex. "
+                    "Therefore, including files from full path from files from scan only path is forbidden.",
+                    state->path_buffer.data);
+                return 1u;
+            }
 
-    case INCLUDE_TYPE_SCAN:
-        flags |= LEX_FILE_FLAG_SCAN_ONLY;
-        break;
+            break;
+
+        case INCLUDE_TYPE_SCAN:
+            flags |= LEX_FILE_FLAG_SCAN_ONLY;
+            break;
+        }
     }
 
     lex_file_from_handle (state->instance, input_file, state->path_buffer.data, flags);
@@ -4689,6 +4708,15 @@ static void lex_preprocessor_define (struct lexer_file_state_t *state)
     }
 
     case TOKEN_TYPE_NEW_LINE:
+        if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+        {
+            // Push this new line to preserve line numbers.
+            context_output_null_terminated (state->instance, "\n");
+        }
+
+        // No replacement list, go directly to registration.
+        goto register_macro;
+
     case TOKEN_TYPE_END_OF_FILE:
         // No replacement list, go directly to registration.
         goto register_macro;
@@ -4728,7 +4756,7 @@ static void lex_preprocessor_define (struct lexer_file_state_t *state)
 
 register_macro:
     // Register generated macro.
-    context_macro_add (state->instance, node);
+    context_macro_add (state->instance, node, &state->tokenization);
     lex_update_tokenization_flags (state);
 }
 
@@ -4934,7 +4962,7 @@ static void lex_preprocessor_pragma (struct lexer_file_state_t *state)
 
     if (current_token.type == TOKEN_TYPE_IDENTIFIER && current_token.identifier_kind == IDENTIFIER_KIND_REGULAR &&
         current_token.end - current_token.begin == sizeof ("once") - 1u &&
-        strncmp (current_token.begin, "once", sizeof ("once")) == 0)
+        strncmp (current_token.begin, "once", sizeof ("once") - 1u) == 0)
     {
         if ((state->flags & LEX_FILE_FLAG_PROCESSED_PRAGMA_ONCE) == 0u)
         {
@@ -5323,7 +5351,11 @@ static void lex_file_from_handle (struct context_t *instance,
     }
 #endif
 
-    context_output_line_marker (instance, 1u, state->file_name);
+    if ((state->flags & LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        context_output_line_marker (instance, 1u, state->file_name);
+    }
+
     re2c_state_init_for_file (&state->tokenization, state->file_name, input_file);
     lex_update_tokenization_flags (state);
 
@@ -5572,14 +5604,14 @@ void cushion_context_configure_define (cushion_context_t context, const char *na
     const size_t name_length = strlen (name);
     char *name_copy = stack_group_allocator_allocate (&instance->allocator, name_length + 1u, _Alignof (char),
                                                       ALLOCATION_CLASS_PERSISTENT);
-    
+
     memcpy (name_copy, name, name_length);
     name_copy[name_length] = '\0';
-    
+
     const size_t value_length = strlen (value);
     char *value_copy = stack_group_allocator_allocate (&instance->allocator, value_length + 1u, _Alignof (char),
-                                                      ALLOCATION_CLASS_PERSISTENT);
-    
+                                                       ALLOCATION_CLASS_PERSISTENT);
+
     memcpy (value_copy, value, value_length);
     value_copy[value_length] = '\0';
 
@@ -5676,7 +5708,7 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
                 switch (lex_result)
                 {
                 case LEX_REPLACEMENT_LIST_RESULT_REGULAR:
-                    context_macro_add (instance, macro_node);
+                    context_macro_add (instance, macro_node, NULL);
                     break;
 
                 case LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
