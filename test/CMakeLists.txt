@@ -25,5 +25,9 @@ register_test ("macro_preserve")
 register_test ("macro_stringize")
 register_test ("macro_trivial")
 register_test ("macro_variadic")
+register_test ("multiple_input" "--input" 
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/multiple_input_append_1.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/multiple_input_append_2.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/multiple_input_append_3.c")
 register_test ("pragma_trivial")
 
