@@ -1,5 +1,5 @@
-set (CUSHION_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/source/cushion.c")
-set (CUSHION_SOURCE_PREPROCESSED "${CMAKE_CURRENT_BINARY_DIR}/cushion.c")
+set (TOKENIZATION_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/source/tokenization.c")
+set (TOKENIZATION_SOURCE_PREPROCESSED "${CMAKE_CURRENT_BINARY_DIR}/tokenization.c")
 
 if (CUSHION_IDENTIFIERS_UNICODE)
     set (RE2C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/re2c/unicode")
@@ -8,16 +8,16 @@ else ()
 endif ()
 
 add_custom_command (
-        OUTPUT "${CUSHION_SOURCE_PREPROCESSED}"
+        OUTPUT "${TOKENIZATION_SOURCE_PREPROCESSED}"
         COMMAND
         "${CUSHION_RE2C_EXECUTABLE}"
-        "${CUSHION_SOURCE}"
-        -o "${CUSHION_SOURCE_PREPROCESSED}"
-        --depfile "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
+        "${TOKENIZATION_SOURCE}"
+        -o "${TOKENIZATION_SOURCE_PREPROCESSED}"
+        --depfile "${CMAKE_CURRENT_BINARY_DIR}/tokenization.depfile"
         -I "${RE2C_INCLUDE_DIR}"
-        DEPENDS "${CUSHION_SOURCE}"
-        DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
-        COMMENT "Preprocess re2c syntax inside Cushion implementation."
+        DEPENDS "${TOKENIZATION_SOURCE}"
+        DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/tokenization.depfile"
+        COMMENT "Preprocess re2c syntax inside Cushion tokenization implementation."
         VERBATIM)
 
 # Add compile definitions globally in directory, as we have a highlight target too.
@@ -32,11 +32,17 @@ add_compile_definitions (
         "CUSHION_INPUT_BUFFER_SIZE=${CUSHION_INPUT_BUFFER_SIZE}"
         "CUSHION_PATH_BUFFER_SIZE=${CUSHION_PATH_BUFFER_SIZE}")
 
-add_library (lib_cushion STATIC "${CUSHION_SOURCE_PREPROCESSED}")
+set (CUSHION_SOURCES 
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/api.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/instance.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/lexing.c")
+
+add_library (lib_cushion STATIC "${CUSHION_SOURCES}" "${TOKENIZATION_SOURCE_PREPROCESSED}")
 target_include_directories (lib_cushion PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/source>
         $<INSTALL_INTERFACE:include/cushion>)
 
 # Duplicate highlight target for proper highlight of Cushion source inside IDEs.
-add_library (lib_cushion_highlight OBJECT EXCLUDE_FROM_ALL "${CUSHION_SOURCE}")
-target_include_directories (lib_cushion_highlight PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+add_library (lib_cushion_highlight OBJECT EXCLUDE_FROM_ALL "${CUSHION_SOURCES}" "${TOKENIZATION_SOURCE}")
+target_include_directories (lib_cushion_highlight PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
