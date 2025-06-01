@@ -1,6 +1,12 @@
 set (CUSHION_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/cushion.c")
 set (CUSHION_SOURCE_PREPROCESSED "${CMAKE_CURRENT_BINARY_DIR}/cushion.c")
 
+if (CUSHION_IDENTIFIERS_UNICODE)
+    set (RE2C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/re2c/unicode")
+else ()
+    set (RE2C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/re2c/ascii")
+endif ()
+
 add_custom_command (
         OUTPUT "${CUSHION_SOURCE_PREPROCESSED}"
         COMMAND
@@ -8,23 +14,11 @@ add_custom_command (
         "${CUSHION_SOURCE}"
         -o "${CUSHION_SOURCE_PREPROCESSED}"
         --depfile "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
-        -I "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${RE2C_INCLUDE_DIR}"
         DEPENDS "${CUSHION_SOURCE}"
         DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/cushion.depfile"
         COMMENT "Preprocess re2c syntax inside Cushion implementation."
         VERBATIM)
-
-if (CUSHION_IDENTIFIERS_UNICODE)
-    file (COPY_FILE
-            "${CMAKE_CURRENT_SOURCE_DIR}/identifiers_unicode.re"
-            "${CMAKE_CURRENT_BINARY_DIR}/identifiers.re"
-            ONLY_IF_DIFFERENT)
-else ()
-    file (COPY_FILE
-            "${CMAKE_CURRENT_SOURCE_DIR}/identifiers_ascii.re"
-            "${CMAKE_CURRENT_BINARY_DIR}/identifiers.re"
-            ONLY_IF_DIFFERENT)
-endif ()
 
 # Add compile definitions globally in directory, as we have a highlight target too.
 if (CUSHION_EXTENSIONS)

@@ -4,8 +4,7 @@
 
 use strict;
 use warnings;
-use Cwd 'abs_path';
-use Cwd 'getcwd';
+use Cwd 'abs_path', 'getcwd';
 use File::Basename;
 
 my $executable = shift or die "Expected executable path.";
