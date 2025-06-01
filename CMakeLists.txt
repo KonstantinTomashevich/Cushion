@@ -103,7 +103,7 @@ endif ()
 # Provide install logic.
 
 install (TARGETS cushion lib_cushion EXPORT cushion)
-install (FILES "${CMAKE_CURRENT_SOURCE_DIR}/library/cushion.h" DESTINATION "include/cushion")
+install (FILES "${CMAKE_CURRENT_SOURCE_DIR}/library/include/cushion.h" DESTINATION "include/cushion")
 install (EXPORT cushion DESTINATION cushion)
 
 # Attach clang format if found.
