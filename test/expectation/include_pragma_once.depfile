@@ -1,0 +1,1 @@
+include_pragma_once.c : source/include_pragma_once.c include/include_full/trivial.h 

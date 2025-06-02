@@ -1,0 +1,1 @@
+include_trivial.c : source/include_trivial.c include/include_full/trivial.h 

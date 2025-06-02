@@ -203,6 +203,20 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
     if (result == CUSHION_RESULT_OK)
     {
         instance->output = fopen (instance->output_path, "w");
+        if (instance->cmake_depfile_path)
+        {
+            instance->cmake_depfile_output = fopen (instance->cmake_depfile_path, "w");
+            if (instance->cmake_depfile_output)
+            {
+                cushion_instance_output_depfile_target (instance);
+            }
+            else
+            {
+                fprintf (stderr, "Failed to open depfile output file \"%s\".\n", instance->cmake_depfile_path);
+                result = CUSHION_RESULT_FAILED_TO_OPEN_OUTPUT;
+            }
+        }
+
         if (instance->output)
         {
             struct cushion_input_node_t *input_node = instance->inputs_first;
@@ -224,6 +238,11 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
         {
             fprintf (stderr, "Failed to open output file \"%s\".\n", instance->output_path);
             result = CUSHION_RESULT_FAILED_TO_OPEN_OUTPUT;
+        }
+
+        if (instance->cmake_depfile_output)
+        {
+            fclose (instance->cmake_depfile_output);
         }
     }
 

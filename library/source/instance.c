@@ -174,6 +174,11 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
         instance->pragma_once_buckets[index] = NULL;
     }
 
+    for (unsigned int index = 0u; index < CUSHION_DEPFILE_BUCKETS; ++index)
+    {
+        instance->cmake_depfile_buckets[index] = NULL;
+    }
+
     instance->unresolved_macros_first = NULL;
 }
 
@@ -324,6 +329,126 @@ void cushion_instance_output_line_marker (struct cushion_instance_t *instance, u
             fprintf (stderr, "Failed to output preprocessed code.\n");
             cushion_instance_signal_error (instance);
         }
+    }
+}
+
+static void output_depfile_path_name (struct cushion_instance_t *instance, const char *absolute_path_name)
+{
+    char conversion_buffer[CUSHION_PATH_MAX];
+    const char *cursor = absolute_path_name;
+    char *output = conversion_buffer;
+
+#define CHECK_OUTPUT_BOUNDS                                                                                            \
+    if (output >= conversion_buffer + CUSHION_PATH_MAX)                                                                \
+    {                                                                                                                  \
+        fprintf (stderr, "Failed to add path name \"%s\" to depfile due to path length overflow,\n",                   \
+                 absolute_path_name);                                                                                  \
+        cushion_instance_signal_error (instance);                                                                      \
+        return;                                                                                                        \
+    }
+
+    while (*cursor)
+    {
+        if (*cursor == ' ')
+        {
+            CHECK_OUTPUT_BOUNDS
+            *output = '\\';
+            ++output;
+
+            CHECK_OUTPUT_BOUNDS
+            *output = ' ';
+            ++output;
+        }
+        else if (*cursor == '\\')
+        {
+            // Replace \ with / for depfile format. Replace \\ with single /.
+            if (*(cursor + 1u) == '\\')
+            {
+                ++cursor;
+            }
+
+            CHECK_OUTPUT_BOUNDS
+            *output = '/';
+            ++output;
+        }
+        else
+        {
+            CHECK_OUTPUT_BOUNDS
+            *output = *cursor;
+            ++output;
+        }
+
+        ++cursor;
+    }
+
+    CHECK_OUTPUT_BOUNDS
+    *output = '\0';
+
+    if (fprintf (instance->cmake_depfile_output, "%s ", conversion_buffer) == 0)
+    {
+        fprintf (stderr, "Failed to output depfile path name.\n");
+        cushion_instance_signal_error (instance);
+    }
+}
+
+void cushion_instance_output_depfile_target (struct cushion_instance_t *instance)
+{
+    if (instance->cmake_depfile_output)
+    {
+        // Convert output path to absolute as it might be relative, but depfile must use absolute paths.
+        char absolute_buffer[CUSHION_PATH_MAX];
+
+        if (cushion_convert_path_to_absolute (instance->output_path, absolute_buffer) != CUSHION_INTERNAL_RESULT_OK)
+        {
+            fprintf (stderr, "Failed to convert output path to absolute for depfile.\n");
+            cushion_instance_signal_error (instance);
+            return;
+        }
+
+        output_depfile_path_name (instance, absolute_buffer);
+        if (fprintf (instance->cmake_depfile_output, ": ") == 0)
+        {
+            fprintf (stderr, "Failed to output depfile target separator.\n");
+            cushion_instance_signal_error (instance);
+        }
+    }
+}
+
+void cushion_instance_output_depfile_entry (struct cushion_instance_t *instance, const char *absolute_path)
+{
+    if (instance->cmake_depfile_output)
+    {
+        const unsigned int path_hash = cushion_hash_djb2_null_terminated (absolute_path);
+        struct cushion_depfile_dependency_node_t *search_node =
+            instance->cmake_depfile_buckets[path_hash % CUSHION_DEPFILE_BUCKETS];
+
+        while (search_node)
+        {
+            if (search_node->path_hash == path_hash && strcmp (search_node->path, absolute_path) == 0)
+            {
+                break;
+            }
+
+            search_node = search_node->next;
+        }
+
+        if (search_node)
+        {
+            // Already added to depfile.
+            return;
+        }
+        
+        struct cushion_depfile_dependency_node_t *new_node = cushion_allocator_allocate (
+            &instance->allocator, sizeof (struct cushion_depfile_dependency_node_t),
+            _Alignof (struct cushion_depfile_dependency_node_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+        
+        new_node->path_hash = path_hash;
+        new_node->path = cushion_instance_copy_null_terminated_inside (instance, absolute_path,
+                                                                       CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+        new_node->next = instance->cmake_depfile_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS];
+        instance->cmake_depfile_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS] = new_node;
+        output_depfile_path_name (instance, absolute_path);
     }
 }
 

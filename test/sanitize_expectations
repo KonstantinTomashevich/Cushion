@@ -1,16 +1,19 @@
 #!/usr/bin/perl
 
-# Script for sanitizing #line directives in expectation files: 
-# it replaces real paths with paths local to test directory.
-# It is needed for proper version control and also not to leak details of local development setups.
+# Script for sanitizing #line directives and depfile paths in expectations.
 
 use strict;
 use warnings;
+
 use Cwd 'abs_path';
 use File::Basename;
+use FindBin '$Bin';
+
+use lib "$Bin";
+use cushion_common;
 
 my $test_directory = abs_path dirname $0;
-my @files = <$test_directory/expectation/*>;
+my @files = <$test_directory/expectation/*.c>;
 
 print $test_directory . "\n";
 
@@ -23,12 +26,25 @@ foreach my $file (@files) {
     open my $out_handle, '>', $file or die "Failed to open output file for write: $!";
 
     while (<$in_handle>) {
-        if (/#line ([0-9]+) \"$test_directory\/([a-z0-9_\.\/\\]+)\"/) {
-            print $out_handle "#line " . $1 . " \"" . $2 . "\"\n";
-        }
-        else {
-            print $out_handle $_;
-        }
+        print $out_handle (fix_line_directive $test_directory, $_);
+    }
+
+    close $in_handle;
+    close $out_handle;
+    unlink $backup_file or die "Failed to unlink backup file: $!";
+}
+
+@files =  <$test_directory/expectation/*.depfile>;
+foreach my $file (@files) {
+    print "Sanitizing depfile rules in $file...\n";
+    my $backup_file = $file . ".backup";
+    rename $file, $backup_file or die "Failed to rename input file to backup file: $!";
+
+    open my $in_handle, '<', $backup_file or die "Failed to open input file for read: $!";
+    open my $out_handle, '>', $file or die "Failed to open output file for write: $!";
+
+    while (<$in_handle>) {
+        print $out_handle (fix_depfile_line $test_directory, $_);
     }
 
     close $in_handle;

@@ -3571,18 +3571,7 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     state->conditional_inclusion_node = NULL;
 
     // We need to always convert file path to absolute in order to have proper line directives everywhere.
-#if defined(CUSHION_GET_ABSOLUTE_PATH_WINDOWS)
-    if (!GetFullPathName (path, CUSHION_PATH_MAX, state->file_name, NULL))
-    {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Unable to convert path \"%s\" to absolute path.", path);
-
-        stack_group_allocator_reset_transient (&instance->allocator, allocation_marker);
-        return;
-    }
-
-#elif defined(CUSHION_GET_ABSOLUTE_PATH_UNIX)
-    if (!realpath (path, state->file_name))
+    if (cushion_convert_path_to_absolute (path, state->file_name) != CUSHION_INTERNAL_RESULT_OK)
     {
         cushion_instance_execution_error (state->instance, &state->tokenization,
                                           "Unable to convert path \"%s\" to absolute path.", path);
@@ -3590,8 +3579,8 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
         cushion_allocator_reset_transient (&instance->allocator, allocation_marker);
         return;
     }
-#endif
 
+    cushion_instance_output_depfile_entry (state->instance, state->file_name);
     if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
         cushion_instance_output_line_marker (instance, 1u, state->file_name);
@@ -3759,5 +3748,3 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     // so there is usually no need for aggressive memory reuse.
     cushion_allocator_reset_transient (&instance->allocator, allocation_marker);
 }
-
-// TODO: Add support for depfiles later.

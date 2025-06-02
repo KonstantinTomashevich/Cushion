@@ -4,8 +4,13 @@
 
 use strict;
 use warnings;
+
 use Cwd 'abs_path', 'getcwd';
 use File::Basename;
+use FindBin '$Bin';
+
+use lib "$Bin";
+use cushion_common;
 
 my $executable = shift or die "Expected executable path.";
 my $test_name = shift or die "Expected test name.";
@@ -14,7 +19,9 @@ my $test_directory = abs_path dirname $0;
 
 my $test_source = $test_directory . "/source/" . $test_name . ".c";
 my $test_expectation = $test_directory . "/expectation/" . $test_name . ".c";
+my $test_expectation_depfile = $test_directory . "/expectation/" . $test_name . ".depfile";
 my $test_result = getcwd . "/" . $test_name . ".c";
+my $test_depfile = getcwd . "/" . $test_name . ".depfile";
 
 my $include_full = $test_directory . "/include";
 my $include_scan_only = $test_directory . "/include_scan_only";
@@ -27,6 +34,8 @@ my @test_command_list = (
     $test_source,
     "--output",
     $test_result,
+    "--cmake-depfile",
+    $test_depfile,
     "--include-full",
     $include_full,
     "--include-scan",
@@ -41,7 +50,9 @@ print "    Test directory: " . $test_directory . "\n";
 print "    Test name: " . $test_name . "\n";
 print "    Test source: " . $test_source . "\n";
 print "    Test expectation: " . $test_expectation . "\n";
+print "    Test expectation depfile: " . $test_expectation_depfile . "\n";
 print "    Test result: " . $test_result . "\n";
+print "    Test depfile: " . $test_depfile . "\n";
 print "    Include (full): " . $include_full . "\n";
 print "    Include (scan only): " . $include_scan_only . "\n";
 print "    Additional arguments: " . (join " ", @other_args) . "\n";
@@ -63,11 +74,7 @@ while (1) {
     die "Result has less lines than expectation." unless defined $result_line;
     die "Result has more lines than expectation." unless defined $expectation_line;
 
-    if ($result_line =~ /#line ([0-9]+) \"$test_directory\/([a-z0-9_\.\/\\]+)\"/) {
-        # Replace absolute line directive with repository localized line directive that is stored in expectation.
-        $result_line = "#line " . $1 . " \"" . $2 . "\"\n";
-    }
-
+    $result_line = fix_line_directive $test_directory, $result_line;
     if ($result_line ne $expectation_line) {
         print "Line #$. is different in result and expectation.\n";
         print "    Result     : $result_line";
@@ -78,4 +85,29 @@ while (1) {
 
 close $result_handle;
 close $expectation_handle;
-print "Matched with expectation. Test passed.\n";
+print "Matched with expectation.\n\n";
+
+print "Checking depfile.\n\n";
+open $result_handle, '<', $test_depfile or die "Failed to open test result depfile.";
+open $expectation_handle, '<', $test_expectation_depfile or die "Failed to open test expectation depfile.";
+
+while (1) {
+    my $result_line = <$result_handle>;
+    my $expectation_line = <$expectation_handle>;
+
+    last unless defined $result_line || defined $expectation_line;
+    die "Result depfile has less lines than expectation." unless defined $result_line;
+    die "Result depfile has more lines than expectation." unless defined $expectation_line;
+
+    $result_line = fix_depfile_line $test_directory, $result_line;
+    if ($result_line ne $expectation_line) {
+        print "Line #$. is different in result depfile and expectation depfile.\n";
+        print "    Result     : $result_line\n";
+        print "    Expectation: $expectation_line\n";
+        die "Found difference in result and expectation."
+    }
+}
+
+close $result_handle;
+close $expectation_handle;
+print "Matched depfile. Test passed.\n";

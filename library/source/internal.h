@@ -71,6 +71,25 @@ enum cushion_internal_result_t
     CUSHION_INTERNAL_RESULT_FAILED = 1u,
 };
 
+/// \invariant Output allocation must be at least CUSHION_PATH_MAX bytes.
+static inline enum cushion_internal_result_t cushion_convert_path_to_absolute (const char *input, char *output)
+{
+#if defined(CUSHION_GET_ABSOLUTE_PATH_WINDOWS)
+    if (GetFullPathName (input, CUSHION_PATH_MAX, output, NULL))
+    {
+        return CUSHION_INTERNAL_RESULT_OK;
+    }
+
+#elif defined(CUSHION_GET_ABSOLUTE_PATH_UNIX)
+    if (realpath (input, output))
+    {
+        return CUSHION_INTERNAL_RESULT_OK;
+    }
+#endif
+    
+    return CUSHION_INTERNAL_RESULT_FAILED;
+}
+
 // Memory management section: common utility for memory management.
 
 /// \brief We use double stack allocator for everything.
@@ -141,6 +160,7 @@ struct cushion_instance_t
 
     struct cushion_macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
     struct cushion_pragma_once_file_node_t *pragma_once_buckets[CUSHION_PRAGMA_ONCE_BUCKETS];
+    struct cushion_depfile_dependency_node_t *cmake_depfile_buckets[CUSHION_DEPFILE_BUCKETS];
 
     struct cushion_allocator_t allocator;
 
@@ -219,6 +239,13 @@ struct cushion_pragma_once_file_node_t
     const char *path;
 };
 
+struct cushion_depfile_dependency_node_t
+{
+    struct cushion_depfile_dependency_node_t *next;
+    unsigned int path_hash;
+    const char *path;
+};
+
 void cushion_instance_clean_configuration (struct cushion_instance_t *instance);
 
 static inline char *cushion_instance_copy_char_sequence_inside (struct cushion_instance_t *instance,
@@ -280,6 +307,13 @@ void cushion_instance_output_sequence (struct cushion_instance_t *instance, cons
 void cushion_instance_output_null_terminated (struct cushion_instance_t *instance, const char *string);
 
 void cushion_instance_output_line_marker (struct cushion_instance_t *instance, unsigned int line, const char *path);
+
+/// \brief Output function to writing depfile target.
+/// \details Should only be called from api.c and needed because 
+///          most depfile-related internal logic is inside instance.c.
+void cushion_instance_output_depfile_target (struct cushion_instance_t *instance);
+
+void cushion_instance_output_depfile_entry (struct cushion_instance_t *instance, const char *absolute_path);
 
 // Tokenization section: structs and functions to properly setup for tokenization.
 

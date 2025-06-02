@@ -1,0 +1,1 @@
+custom_line_directive.c : source/custom_line_directive.c include/include_full/trivial.h 
