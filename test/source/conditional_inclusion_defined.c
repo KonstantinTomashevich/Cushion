@@ -22,6 +22,8 @@ int main (int argc, char **argv)
     
 #if !defined(SOMETHING)
     printf ("should not be here\n");
+    printf ("should not be here\n");
+    printf ("should not be here\n");
 #endif
     
 #ifndef SOMETHING
@@ -33,6 +35,8 @@ int main (int argc, char **argv)
 #endif
     
 #if defined(NOTHING)
+    printf ("should not be here\n");
+    printf ("should not be here\n");
     printf ("should not be here\n");
 #elifdef SOMETHING
     printf ("should be here\n");

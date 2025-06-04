@@ -1,23 +1,20 @@
-#line 1 "source/conditional_inclusion_evaluate_integer.c"
+#line 1 "source/conditional_inclusion_preserve.c"
 #include <stdio.h>
 
 int main (int argc, char **argv)
 {
-
+#if  0
     printf ("A\n");
     printf ("B\n");
-
-    
-#line 14 "source/conditional_inclusion_evaluate_integer.c"
-    
-
+#elif  0
+    printf ("C\n");
+    printf ("D\n");
+#elif  1
     printf ("E\n");
     printf ("F\n");
-
-    
-
+#else 
     printf ("G\n");
     printf ("H\n");
-
+#endif 
     return 0;
 }

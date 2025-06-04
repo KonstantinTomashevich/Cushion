@@ -154,9 +154,10 @@ need from wrapped code if we need to or to just break out of query: cursor and a
 don't return value pointer like that, databases APIs do not expect such behavior for sure.
 
 There is an argument that similar result could be achieved through macro with variadic arguments. It is true and it is
-totally possible, however it is usually less readable and some code formatters have trouble with that approach. Also,
-debuggers might have an issue with using variadic arguments for wrapping as it may result in elision of proper line
-directives. Therefore, wrapper macros might be cleaner and more tool-friendly solution in most cases.
+totally possible, however passing everything to usual macro as variadic arguments results in loss of line information, 
+making it very difficult to fix compilation errors and making it impossible to debug properly. 
+`__CUSHION_WRAPPED__` is guaranteed to save lines inside wrapped block, making fixing compilation and debugging as easy 
+as with usual code block.
 
 ### Statement accumulators
 

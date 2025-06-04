@@ -1,8 +1,7 @@
 #line 1 "source/macro_undef.c"
-#line 2 "source/macro_undef.c"
+
 
 #define MACRO_PRESERVED  42
-#line 4 "source/macro_undef.c"
 
 #undef MACRO_PRESERVED
 

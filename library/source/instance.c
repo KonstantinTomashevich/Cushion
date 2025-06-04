@@ -437,14 +437,14 @@ void cushion_instance_output_depfile_entry (struct cushion_instance_t *instance,
             // Already added to depfile.
             return;
         }
-        
+
         struct cushion_depfile_dependency_node_t *new_node = cushion_allocator_allocate (
             &instance->allocator, sizeof (struct cushion_depfile_dependency_node_t),
             _Alignof (struct cushion_depfile_dependency_node_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
-        
+
         new_node->path_hash = path_hash;
-        new_node->path = cushion_instance_copy_null_terminated_inside (instance, absolute_path,
-                                                                       CUSHION_ALLOCATION_CLASS_PERSISTENT);
+        new_node->path =
+            cushion_instance_copy_null_terminated_inside (instance, absolute_path, CUSHION_ALLOCATION_CLASS_PERSISTENT);
 
         new_node->next = instance->cmake_depfile_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS];
         instance->cmake_depfile_buckets[path_hash % CUSHION_PRAGMA_ONCE_BUCKETS] = new_node;

@@ -237,8 +237,15 @@ struct cushion_token_list_item_t *cushion_save_token_to_memory (struct cushion_i
                                     _Alignof (struct cushion_token_list_item_t), allocation_class);
 
     target->next = NULL;
-    target->token.type = token->type;
+    // By default, file and line data is not initialized and initialization is left to the user.
+    target->file = NULL;
+    target->line = 0u;
 
+#if defined(CUSHION_EXTENSIONS)
+    target->flags = CUSHION_TOKEN_LIST_ITEM_FLAG_NONE;
+#endif
+
+    target->token.type = token->type;
     target->token.begin =
         cushion_instance_copy_char_sequence_inside (instance, token->begin, token->end, allocation_class);
     target->token.end = target->token.begin + (token->end - token->begin);

@@ -86,7 +86,7 @@ static inline enum cushion_internal_result_t cushion_convert_path_to_absolute (c
         return CUSHION_INTERNAL_RESULT_OK;
     }
 #endif
-    
+
     return CUSHION_INTERNAL_RESULT_FAILED;
 }
 
@@ -204,6 +204,9 @@ enum cushion_macro_flags_t
 
     CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS = 1u << 1u,
     CUSHION_MACRO_FLAG_PRESERVED = 1u << 2u,
+#if defined(CUSHION_EXTENSIONS)
+    CUSHION_MACRO_FLAG_WRAPPED = 1u << 3u,
+#endif
 };
 
 struct cushion_macro_parameter_node_t
@@ -296,6 +299,12 @@ static inline unsigned int cushion_instance_has_option (struct cushion_instance_
     return instance->options & (1u << option);
 }
 
+static inline unsigned int cushion_instance_has_feature (struct cushion_instance_t *instance,
+                                                         enum cushion_feature_t feature)
+{
+    return instance->features & (1u << feature);
+}
+
 void cushion_instance_macro_add (struct cushion_instance_t *instance,
                                  struct cushion_macro_node_t *node,
                                  struct cushion_tokenization_state_t *tokenization_state_for_logging);
@@ -309,7 +318,7 @@ void cushion_instance_output_null_terminated (struct cushion_instance_t *instanc
 void cushion_instance_output_line_marker (struct cushion_instance_t *instance, unsigned int line, const char *path);
 
 /// \brief Output function to writing depfile target.
-/// \details Should only be called from api.c and needed because 
+/// \details Should only be called from api.c and needed because
 ///          most depfile-related internal logic is inside instance.c.
 void cushion_instance_output_depfile_target (struct cushion_instance_t *instance);
 
@@ -576,10 +585,23 @@ struct cushion_token_t
     };
 };
 
+#if defined(CUSHION_EXTENSIONS)
+enum cushion_token_list_item_flags_t
+{
+    CUSHION_TOKEN_LIST_ITEM_FLAG_NONE = 0u,
+    CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK = 1u << 0u,
+};
+#endif
+
 struct cushion_token_list_item_t
 {
     struct cushion_token_list_item_t *next;
     struct cushion_token_t token;
+    const char *file;
+    unsigned int line;
+#if defined(CUSHION_EXTENSIONS)
+    enum cushion_token_list_item_flags_t flags;
+#endif
 };
 
 struct cushion_token_list_item_t *cushion_save_token_to_memory (struct cushion_instance_t *instance,
@@ -601,7 +623,8 @@ enum cushion_lex_replacement_list_result_t
 enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
     struct cushion_instance_t *instance,
     struct cushion_tokenization_state_t *tokenization_state,
-    struct cushion_token_list_item_t **token_list_output);
+    struct cushion_token_list_item_t **token_list_output,
+    enum cushion_macro_flags_t *flags_output);
 
 enum cushion_lex_file_flags_t
 {
@@ -623,6 +646,23 @@ struct cushion_lexer_file_state_t
 
     struct cushion_instance_t *instance;
     struct lexer_token_stack_item_t *token_stack_top;
+
+    const char *stack_exit_file;
+    
+    /// \details stack_exit_line along with stack_exit_file makes it easy to properly restore line numbers after
+    ///          exiting macro replacement and similar operations.
+    unsigned int stack_exit_line;
+
+    const char *last_marked_file;
+
+    /// \details Reminder about whether to use last_marked_line or cursor_line from tokenization for start line:
+    ///          last_marked_line must be used everywhere where inspected token might come from macro replacement,
+    ///          as it would properly point to current line in macro context.
+    ///          cursor_line must be used for preprocessor directives and things that should never come from macro
+    ///          replacement lists, because for directives last_marked_line is not updated unless directives are
+    ///          preserved in output code.
+    unsigned int last_marked_line;
+
     struct lexer_conditional_inclusion_node_t *conditional_inclusion_node;
 
     /// \brief File name in lexer always points to the actual file using absolute path.

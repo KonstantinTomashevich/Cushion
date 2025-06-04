@@ -3,13 +3,16 @@
 enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
     struct cushion_instance_t *instance,
     struct cushion_tokenization_state_t *tokenization_state,
-    struct cushion_token_list_item_t **token_list_output)
+    struct cushion_token_list_item_t **token_list_output,
+    enum cushion_macro_flags_t *flags_output)
 {
     *token_list_output = NULL;
     struct cushion_token_list_item_t *first = NULL;
     struct cushion_token_list_item_t *last = NULL;
     struct cushion_token_t current_token;
     unsigned int lexing = 1u;
+    
+    // TODO: We need to use lexer state here if we want to support preprocessor directives inside __CUSHION_WRAPPED__.
 
     while (lexing)
     {
@@ -20,22 +23,22 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
             return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
         }
 
-#define APPEND_TOKEN_TO_LIST(ITEM)                                                                                     \
-    if (last)                                                                                                          \
-    {                                                                                                                  \
-        last->next = ITEM;                                                                                             \
-    }                                                                                                                  \
-    else                                                                                                               \
-    {                                                                                                                  \
-        first = ITEM;                                                                                                  \
-    }                                                                                                                  \
-    last = ITEM
-
 #define SAVE_AND_APPEND_TOKEN_TO_LIST                                                                                  \
     {                                                                                                                  \
         struct cushion_token_list_item_t *new_token_item =                                                             \
             cushion_save_token_to_memory (instance, &current_token, CUSHION_ALLOCATION_CLASS_PERSISTENT);              \
-        APPEND_TOKEN_TO_LIST (new_token_item);                                                                         \
+                                                                                                                       \
+        /* We do not save file and line info in replacement lists as this is not how macros usually work. */           \
+        if (last)                                                                                                      \
+        {                                                                                                              \
+            last->next = new_token_item;                                                                               \
+        }                                                                                                              \
+        else                                                                                                           \
+        {                                                                                                              \
+            first = new_token_item;                                                                                    \
+        }                                                                                                              \
+                                                                                                                       \
+        last = new_token_item;                                                                                         \
     }
 
         switch (current_token.type)
@@ -62,8 +65,9 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
             return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
 
         case CUSHION_TOKEN_TYPE_IDENTIFIER:
-            if (current_token.identifier_kind == CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE)
+            switch (current_token.identifier_kind)
             {
+            case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
                 if (first)
                 {
                     cushion_instance_execution_error (
@@ -75,6 +79,26 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
                 }
 
                 return CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
+
+#if defined(CUSHION_EXTENSIONS)
+            case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
+                if (cushion_instance_has_feature (instance, CUSHION_FEATURE_WRAPPER_MACRO))
+                {
+                    *flags_output |= CUSHION_MACRO_FLAG_WRAPPED;
+                }
+                else
+                {
+                    cushion_instance_execution_error (instance, tokenization_state,
+                                                      "Encountered __CUSHION_WRAPPED__, but this feature is not "
+                                                      "enabled in current execution context.");
+                    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+                }
+
+                break;
+#endif
+
+            default:
+                break;
             }
 
             SAVE_AND_APPEND_TOKEN_TO_LIST
@@ -101,7 +125,6 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
         }
 
 #undef SAVE_AND_APPEND_TOKEN_TO_LIST
-#undef APPEND_TOKEN_TO_LIST
     }
 
     *token_list_output = first;
@@ -111,7 +134,7 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
 enum lexer_token_stack_item_flags_t
 {
     LEXER_TOKEN_STACK_ITEM_FLAG_NONE = 0u,
-    LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT,
+    LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT = 1u << 0u,
 };
 
 struct lexer_token_stack_item_t
@@ -119,6 +142,10 @@ struct lexer_token_stack_item_t
     struct lexer_token_stack_item_t *previous;
     struct cushion_token_list_item_t *tokens_current;
     enum lexer_token_stack_item_flags_t flags;
+
+#if defined(CUSHION_EXTENSIONS)
+    enum cushion_token_list_item_flags_t last_popped_flags;
+#endif
 };
 
 enum lexer_conditional_inclusion_state_t
@@ -158,6 +185,13 @@ static inline void lexer_file_state_push_tokens (struct cushion_lexer_file_state
         return;
     }
 
+    // Add stack exit file name and line.
+    if (!state->token_stack_top)
+    {
+        state->stack_exit_file = state->tokenization.file_name;
+        state->stack_exit_line = state->tokenization.cursor_line;
+    }
+
     struct lexer_token_stack_item_t *item =
         cushion_allocator_allocate (&state->instance->allocator, sizeof (struct lexer_token_stack_item_t),
                                     _Alignof (struct lexer_token_stack_item_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
@@ -165,26 +199,82 @@ static inline void lexer_file_state_push_tokens (struct cushion_lexer_file_state
     item->previous = state->token_stack_top;
     item->tokens_current = tokens;
     item->flags = flags;
+#if defined(CUSHION_EXTENSIONS)
+    item->last_popped_flags = CUSHION_TOKEN_LIST_ITEM_FLAG_NONE;
+#endif
     state->token_stack_top = item;
 }
 
-static inline enum lexer_token_stack_item_flags_t lexer_file_state_pop_token (struct cushion_lexer_file_state_t *state,
-                                                                              struct cushion_token_t *output)
+static inline void lexer_file_state_reinsert_token (struct cushion_lexer_file_state_t *state,
+                                                    const struct cushion_token_t *token)
 {
-    enum lexer_token_stack_item_flags_t flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE;
-    if (state->token_stack_top)
+    struct cushion_token_list_item_t *new_token =
+        cushion_allocator_allocate (&state->instance->allocator, sizeof (struct cushion_token_list_item_t),
+                                    _Alignof (struct cushion_token_list_item_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+    new_token->next = NULL;
+    new_token->token = *token;
+
+    new_token->file = state->tokenization.file_name;
+    new_token->line = token->type == CUSHION_TOKEN_TYPE_NEW_LINE ? state->tokenization.cursor_line - 1u :
+                                                                   state->tokenization.cursor_line;
+
+#if defined(CUSHION_EXTENSIONS)
+    new_token->flags =
+        state->token_stack_top ? state->token_stack_top->last_popped_flags : CUSHION_TOKEN_LIST_ITEM_FLAG_NONE;
+#endif
+
+    lexer_file_state_push_tokens (
+        state, new_token, state->token_stack_top ? state->token_stack_top->flags : LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+}
+
+struct lexer_pop_token_meta_t
+{
+    enum lexer_token_stack_item_flags_t flags;
+    const char *file;
+    unsigned int line;
+};
+
+static struct lexer_pop_token_meta_t lexer_file_state_pop_token (struct cushion_lexer_file_state_t *state,
+                                                                 struct cushion_token_t *output)
+{
+    struct lexer_pop_token_meta_t meta = {
+        .flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE,
+        .file = state->tokenization.file_name,
+        .line = state->tokenization.cursor_line,
+    };
+
+    while (state->token_stack_top)
     {
-        flags = state->token_stack_top->flags;
-        *output = state->token_stack_top->tokens_current->token;
-        state->token_stack_top->tokens_current = state->token_stack_top->tokens_current->next;
-
-        if (!state->token_stack_top->tokens_current)
+        if (state->token_stack_top->tokens_current)
         {
-            // Stack list has ended, that means that macro replacement is no more, so we can pop out that stack item.
-            state->token_stack_top = state->token_stack_top->previous;
-        }
+            *output = state->token_stack_top->tokens_current->token;
+            meta.flags = state->token_stack_top->flags;
+            meta.file = state->token_stack_top->tokens_current->file;
+            meta.line = state->token_stack_top->tokens_current->line;
 
-        goto read_token;
+#if defined(CUSHION_EXTENSIONS)
+            if (state->token_stack_top->tokens_current->flags & CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK)
+            {
+                // Manually disable macro replacement logic for wrapped blocks.
+                meta.flags &= ~LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT;
+            }
+
+            state->token_stack_top->last_popped_flags = state->token_stack_top->tokens_current->flags;
+#endif
+
+            state->token_stack_top->tokens_current = state->token_stack_top->tokens_current->next;
+            goto read_token;
+        }
+        else
+        {
+            state->token_stack_top = state->token_stack_top->previous;
+            if (!state->token_stack_top)
+            {
+                meta.file = state->stack_exit_file;
+                meta.line = state->stack_exit_line;
+            }
+        }
     }
 
     // No more ready-to-use tokens from replacement lists or other sources, request next token from tokenizer.
@@ -197,7 +287,7 @@ read_token:
         state->lexing = 0u;
     }
 
-    return flags;
+    return meta;
 }
 
 static inline void lexer_file_state_path_init (struct cushion_lexer_file_state_t *state, const char *data)
@@ -495,14 +585,19 @@ struct macro_replacement_context_t
 {
     struct cushion_macro_node_t *macro;
     struct lex_macro_argument_t *arguments;
+    struct cushion_token_list_item_t *wrapped_tokens;
     struct cushion_token_list_item_t *current_token;
+    unsigned int replacement_line;
     struct macro_replacement_token_list_t result;
     struct macro_replacement_token_list_t sub_list;
 };
 
-static inline void macro_replacement_token_list_append (struct cushion_lexer_file_state_t *state,
-                                                        struct macro_replacement_token_list_t *list,
-                                                        struct cushion_token_t *token)
+static inline struct cushion_token_list_item_t *macro_replacement_token_list_append (
+    struct cushion_lexer_file_state_t *state,
+    struct macro_replacement_token_list_t *list,
+    struct cushion_token_t *token,
+    const char *file,
+    unsigned int line)
 {
     struct cushion_token_list_item_t *new_token =
         cushion_allocator_allocate (&state->instance->allocator, sizeof (struct cushion_token_list_item_t),
@@ -512,6 +607,13 @@ static inline void macro_replacement_token_list_append (struct cushion_lexer_fil
     // allocation or manual copy.
     new_token->token = *token;
     new_token->next = NULL;
+
+    new_token->file = file;
+    new_token->line = line;
+
+#if defined(CUSHION_EXTENSIONS)
+    new_token->flags = CUSHION_TOKEN_LIST_ITEM_FLAG_NONE;
+#endif
 
     if (list->last)
     {
@@ -523,6 +625,7 @@ static inline void macro_replacement_token_list_append (struct cushion_lexer_fil
     }
 
     list->last = new_token;
+    return new_token;
 }
 
 static inline void macro_replacement_context_process_identifier_into_sub_list (
@@ -531,8 +634,10 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
     context->sub_list.first = NULL;
     context->sub_list.last = NULL;
 
-    if (context->current_token->token.identifier_kind == CUSHION_IDENTIFIER_KIND_VA_ARGS ||
-        context->current_token->token.identifier_kind == CUSHION_IDENTIFIER_KIND_VA_OPT)
+    switch (context->current_token->token.identifier_kind)
+    {
+    case CUSHION_IDENTIFIER_KIND_VA_ARGS:
+    case CUSHION_IDENTIFIER_KIND_VA_OPT:
     {
         if ((context->macro->flags & CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS) == 0u)
         {
@@ -560,7 +665,8 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
                 struct cushion_token_list_item_t *argument_token = argument->tokens_first;
                 while (argument_token)
                 {
-                    macro_replacement_token_list_append (state, &context->sub_list, &argument_token->token);
+                    macro_replacement_token_list_append (state, &context->sub_list, &argument_token->token,
+                                                         state->tokenization.file_name, context->replacement_line);
                     argument_token = argument_token->next;
                 }
 
@@ -575,7 +681,8 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
                         .punctuator_kind = CUSHION_PUNCTUATOR_KIND_COMMA,
                     };
 
-                    macro_replacement_token_list_append (state, &context->sub_list, &token_comma);
+                    macro_replacement_token_list_append (state, &context->sub_list, &token_comma,
+                                                         state->tokenization.file_name, context->replacement_line);
                     // No need for glue white space, as they are not preserved in replacement lists at all.
                 }
             }
@@ -629,14 +736,34 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
                 if (first_variadic_argument)
                 {
                     // Add token inside __VA_OPT__ only if there are any variadic arguments.
-                    macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token);
+                    macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token,
+                                                         state->tokenization.file_name, context->replacement_line);
                 }
 
                 context->current_token = context->current_token->next;
             }
         }
+
+        break;
     }
-    else
+
+#if defined(CUSHION_EXTENSIONS)
+    case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
+    {
+        struct cushion_token_list_item_t *wrapped_token = context->wrapped_tokens;
+        while (wrapped_token)
+        {
+            struct cushion_token_list_item_t *added = macro_replacement_token_list_append (
+                state, &context->sub_list, &wrapped_token->token, wrapped_token->file, wrapped_token->line);
+            added->flags = wrapped_token->flags;
+            wrapped_token = wrapped_token->next;
+        }
+
+        break;
+    }
+#endif
+
+    default:
     {
         struct lex_macro_argument_t *found_argument = context->arguments;
         struct cushion_macro_parameter_node_t *found_parameter = context->macro->parameters_first;
@@ -667,15 +794,20 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
             struct cushion_token_list_item_t *argument_token = found_argument->tokens_first;
             while (argument_token)
             {
-                macro_replacement_token_list_append (state, &context->sub_list, &argument_token->token);
+                macro_replacement_token_list_append (state, &context->sub_list, &argument_token->token,
+                                                     state->tokenization.file_name, context->replacement_line);
                 argument_token = argument_token->next;
             }
         }
         else
         {
             // Just a regular identifier.
-            macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token);
+            macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token,
+                                                 state->tokenization.file_name, context->replacement_line);
         }
+
+        break;
+    }
     }
 }
 
@@ -696,9 +828,13 @@ static void macro_replacement_context_append_sub_list (struct macro_replacement_
     }
 }
 
-static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushion_lexer_file_state_t *state,
-                                                                   struct cushion_macro_node_t *macro,
-                                                                   struct lex_macro_argument_t *arguments)
+static struct cushion_token_list_item_t *lex_do_macro_replacement (
+    struct cushion_lexer_file_state_t *state,
+    struct cushion_macro_node_t *macro,
+    struct lex_macro_argument_t *arguments,
+    struct cushion_token_list_item_t *wrapped_tokens,
+    // Replacement line is used to properly set file name and line marker information for replacement tokens.
+    unsigned int replacement_line)
 {
     // Technically, full replacement pass is only needed for function-like macros as we need to properly process
     // arguments. However, object-like macros can still use ## operation to merge tokens. It should be processed
@@ -709,7 +845,9 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
     struct macro_replacement_context_t context = {
         .macro = macro,
         .arguments = arguments,
+        .wrapped_tokens = wrapped_tokens,
         .current_token = macro->replacement_list_first,
+        .replacement_line = replacement_line,
         .result =
             {
                 .first = NULL,
@@ -853,7 +991,8 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
 
                     *(char *) stringized_token.begin = '"';
                     *(char *) stringized_token.symbolic_literal.end = '"';
-                    macro_replacement_token_list_append (state, &context.result, &stringized_token);
+                    macro_replacement_token_list_append (state, &context.result, &stringized_token,
+                                                         state->tokenization.file_name, context.replacement_line);
                     break;
                 }
 
@@ -910,7 +1049,8 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
                 assert (output_end <= stringized_token.symbolic_literal.end);
                 *(char *) stringized_token.begin = '"';
                 *(char *) stringized_token.symbolic_literal.end = '"';
-                macro_replacement_token_list_append (state, &context.result, &stringized_token);
+                macro_replacement_token_list_append (state, &context.result, &stringized_token,
+                                                     state->tokenization.file_name, context.replacement_line);
                 break;
             }
 
@@ -1016,7 +1156,8 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
             }
 
             default:
-                macro_replacement_token_list_append (state, &context.result, &context.current_token->token);
+                macro_replacement_token_list_append (state, &context.result, &context.current_token->token,
+                                                     state->tokenization.file_name, context.replacement_line);
                 break;
             }
 
@@ -1027,7 +1168,8 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
         case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
         case CUSHION_TOKEN_TYPE_STRING_LITERAL:
         case CUSHION_TOKEN_TYPE_OTHER:
-            macro_replacement_token_list_append (state, &context.result, &context.current_token->token);
+            macro_replacement_token_list_append (state, &context.result, &context.current_token->token,
+                                                 state->tokenization.file_name, context.replacement_line);
             break;
         }
 
@@ -1041,6 +1183,74 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (struct cushio
     return context.result.first;
 }
 
+static inline unsigned int lex_is_preprocessor_token_type (enum cushion_token_type_t token_type)
+{
+    switch (token_type)
+    {
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+        return 1u;
+
+    default:
+        return 0u;
+    }
+}
+
+static inline void lex_on_line_mark_manually_updated (struct cushion_lexer_file_state_t *state,
+                                                      const char *file,
+                                                      unsigned int line)
+{
+    state->last_marked_file = file;
+    state->last_marked_line = line;
+}
+
+static unsigned int lex_update_line_mark (struct cushion_lexer_file_state_t *state,
+                                          const char *required_file,
+                                          unsigned int required_line)
+{
+    const unsigned int same_file =
+        required_file == state->last_marked_file || strcmp (required_file, state->last_marked_file) == 0;
+
+    // Check line number and add marker if needed.
+    if (state->last_marked_line != required_line || !same_file)
+    {
+        const int max_lines_to_cover_with_new_line = 5u;
+        if (same_file && state->last_marked_line < required_line &&
+            (int) required_line - (int) state->last_marked_line < max_lines_to_cover_with_new_line)
+        {
+            int difference = (int) required_line - (int) state->last_marked_line;
+            while (difference)
+            {
+                cushion_instance_output_null_terminated (state->instance, "\n");
+                --difference;
+            }
+        }
+        else
+        {
+            cushion_instance_output_null_terminated (state->instance, "\n");
+            cushion_instance_output_line_marker (state->instance, required_line, required_file);
+        }
+
+        lex_on_line_mark_manually_updated (state, required_file, required_line);
+        return 1u;
+    }
+
+    return 0u;
+}
+
 enum lex_replace_identifier_if_macro_context_t
 {
     LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE = 0u,
@@ -1051,19 +1261,6 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
     struct cushion_lexer_file_state_t *state,
     struct cushion_token_t *identifier_token,
     enum lex_replace_identifier_if_macro_context_t context);
-
-static inline void lex_preprocessor_fixup_line (struct cushion_lexer_file_state_t *state)
-{
-    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u &&
-        (!state->conditional_inclusion_node ||
-         state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_INCLUDED))
-    {
-        // Make sure that next portion of code starts with correct line directive.
-        // Useful for conditional inclusion and for file includes.
-        cushion_instance_output_line_marker (state->instance, state->tokenization.cursor_line,
-                                             state->tokenization.file_name);
-    }
-}
 
 #define LEX_WHEN_ERROR(...)                                                                                            \
     if (cushion_instance_is_error_signaled (state->instance))                                                          \
@@ -1083,6 +1280,7 @@ static inline void lex_preprocessor_preserved_tail (
         return;
     }
 
+    lex_update_line_mark (state, state->tokenization.file_name, state->tokenization.cursor_line);
     switch (preprocessor_token_type)
     {
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
@@ -1263,8 +1461,7 @@ static inline void lex_preprocessor_preserved_tail (
         case CUSHION_TOKEN_TYPE_NEW_LINE:
             // New line, tail has ended, paste the new line and return out of here.
             cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
-            // Fixup line in case of skipped multi-line comments.
-            lex_preprocessor_fixup_line (state);
+            lex_on_line_mark_manually_updated (state, state->tokenization.file_name, state->tokenization.cursor_line);
             return;
 
         case CUSHION_TOKEN_TYPE_COMMENT:
@@ -1285,10 +1482,31 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 {
     struct cushion_macro_node_t *macro =
         cushion_instance_macro_search (state->instance, identifier_token->begin, identifier_token->end);
+
     if (!macro || (macro->flags & CUSHION_MACRO_FLAG_PRESERVED))
     {
         // No need to unwrap.
         return NULL;
+    }
+
+    const unsigned int start_line = state->last_marked_line;
+    switch (context)
+    {
+    case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE:
+        break;
+
+    case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION:
+#if defined(CUSHION_EXTENSIONS)
+        if (macro->flags & CUSHION_MACRO_FLAG_WRAPPED)
+        {
+            cushion_instance_execution_error (
+                state->instance, &state->tokenization,
+                "Encountered macro that uses __CUSHION_WRAPPED__ inside evaluation context, which is not supported as "
+                "this kind of macros can never be unwrapped into valid integer constant expression.");
+            return NULL;
+        }
+#endif
+        break;
     }
 
     struct lex_macro_argument_t *arguments_first = NULL;
@@ -1296,7 +1514,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 
     if (macro->flags & CUSHION_MACRO_FLAG_FUNCTION)
     {
-        /* Scan for the opening parenthesis. */
+        // Scan for the opening parenthesis.
         struct cushion_token_t current_token;
 
         struct cushion_token_list_item_t *argument_tokens_first = NULL;
@@ -1431,9 +1649,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                 switch (context)
                 {
                 case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE:
-                    // As macro replacement cannot have new lines inside them, then we cannot be in macro replacement
-                    // and therefore can freely output new line while parsing arguments.
-                    cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
+                    // Just skip new line, line number after token replacement would be managed through directives.
                     break;
 
                 case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION:
@@ -1468,19 +1684,22 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                     break;
                 }
 
-                struct cushion_token_list_item_t *argument_token =
+                struct cushion_token_list_item_t *argument_tokens_new_token =
                     cushion_save_token_to_memory (state->instance, &current_token, CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+                argument_tokens_new_token->file = state->tokenization.file_name;
+                argument_tokens_new_token->line = start_line;
 
                 if (argument_tokens_last)
                 {
-                    argument_tokens_last->next = argument_token;
+                    argument_tokens_last->next = argument_tokens_new_token;
                 }
                 else
                 {
-                    argument_tokens_first = argument_token;
+                    argument_tokens_first = argument_tokens_new_token;
                 }
 
-                argument_tokens_last = argument_token;
+                argument_tokens_last = argument_tokens_new_token;
                 break;
             }
             }
@@ -1495,7 +1714,129 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         }
     }
 
-    return lex_do_macro_replacement (state, macro, arguments_first);
+    struct cushion_token_list_item_t *wrapped_tokens_first = NULL;
+#if defined(CUSHION_EXTENSIONS)
+    struct cushion_token_list_item_t *wrapped_tokens_last = NULL;
+
+    if (macro->flags & CUSHION_MACRO_FLAG_WRAPPED)
+    {
+        // Should not have flag if feature is not enabled.
+        assert (cushion_instance_has_feature (state->instance, CUSHION_FEATURE_WRAPPER_MACRO));
+
+        // Not supported inside evaluation anyway.
+        assert (context != LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
+
+        // Scan for opening brace.
+        struct lexer_pop_token_meta_t token_meta;
+        struct cushion_token_t current_token;
+        unsigned int skipping_until_significant = 1u;
+
+        while (skipping_until_significant && !cushion_instance_is_error_signaled (state->instance))
+        {
+            token_meta = lexer_file_state_pop_token (state, &current_token);
+            LEX_WHEN_ERROR (break)
+
+            switch (current_token.type)
+            {
+            case CUSHION_TOKEN_TYPE_NEW_LINE:
+            case CUSHION_TOKEN_TYPE_GLUE:
+            case CUSHION_TOKEN_TYPE_COMMENT:
+                // New line, glue and comments between macro scope and wrapped block are just skipped.
+                break;
+
+            default:
+                // Found something significant.
+                skipping_until_significant = 0u;
+                break;
+            }
+        }
+
+        LEX_WHEN_ERROR (return NULL)
+        if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
+            current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE)
+        {
+            cushion_instance_execution_error (state->instance, &state->tokenization,
+                                              "Expected \"{\" after function-line macro with wrapped block arguments.");
+            return NULL;
+        }
+
+#    define APPEND_WRAPPED_TOKEN(LIST_NAME, TOKEN_TO_SAVE, LINE)                                                       \
+        {                                                                                                              \
+            struct cushion_token_list_item_t *LIST_NAME##_new_token =                                                  \
+                cushion_save_token_to_memory (state->instance, TOKEN_TO_SAVE, CUSHION_ALLOCATION_CLASS_TRANSIENT);     \
+                                                                                                                       \
+            LIST_NAME##_new_token->file = token_meta.file;                                                             \
+            LIST_NAME##_new_token->line = token_meta.line;                                                             \
+                                                                                                                       \
+            if ((token_meta.flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT) == 0u)                              \
+            {                                                                                                          \
+                LIST_NAME##_new_token->flags |= CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK;                            \
+            }                                                                                                          \
+                                                                                                                       \
+            if (LIST_NAME##_last)                                                                                      \
+            {                                                                                                          \
+                LIST_NAME##_last->next = LIST_NAME##_new_token;                                                        \
+            }                                                                                                          \
+            else                                                                                                       \
+            {                                                                                                          \
+                LIST_NAME##_first = LIST_NAME##_new_token;                                                             \
+            }                                                                                                          \
+                                                                                                                       \
+            LIST_NAME##_last = LIST_NAME##_new_token;                                                                  \
+        }
+
+        // Append initial brace.
+        APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
+        unsigned int brace_counter = 1u;
+
+        while (brace_counter > 0u && !cushion_instance_is_error_signaled (state->instance))
+        {
+            token_meta = lexer_file_state_pop_token (state, &current_token);
+            LEX_WHEN_ERROR (break)
+
+            switch (current_token.type)
+            {
+            case CUSHION_TOKEN_TYPE_PUNCTUATOR:
+                switch (current_token.punctuator_kind)
+                {
+                case CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE:
+                    ++brace_counter;
+                    break;
+
+                case CUSHION_PUNCTUATOR_KIND_RIGHT_CURLY_BRACE:
+                    --brace_counter;
+                    break;
+
+                default:
+                    break;
+                }
+
+                APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
+                break;
+
+            case CUSHION_TOKEN_TYPE_NEW_LINE:
+                // Minus one, because new line started at previous line technically.
+                APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line - 1u)
+                break;
+
+            case CUSHION_TOKEN_TYPE_END_OF_FILE:
+                cushion_instance_execution_error (state->instance, &state->tokenization,
+                                                  "Got to the end of file while parsing wrapped block for "
+                                                  "function-like macro with wrapped block feature enabled.");
+                break;
+
+            default:
+                APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
+                break;
+            }
+        }
+
+        LEX_WHEN_ERROR (return NULL)
+#    undef APPEND_WRAPPED_TOKEN
+    }
+#endif
+
+    return lex_do_macro_replacement (state, macro, arguments_first, wrapped_tokens_first, start_line);
 }
 
 enum lex_preprocessor_sub_expression_type_t
@@ -2236,7 +2577,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 {
                     new_item = cushion_allocator_allocate (
                         &state->instance->allocator, sizeof (struct lex_evaluate_stack_item_t),
-                        _Alignof (struct lexer_token_stack_item_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+                        _Alignof (struct lex_evaluate_stack_item_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
                 }
 
                 new_item->left_value = new_argument;
@@ -2302,14 +2643,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
             case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_TERNARY_NEGATIVE:
             {
                 // Put the current token back into carousel so upper call can process it too.
-                // We can just push it without properly saving it as it will be read right away.
-
-                struct cushion_token_list_item_t push_first_token_item = {
-                    .next = NULL,
-                    .token = current_token,
-                };
-
-                lexer_file_state_push_tokens (state, &push_first_token_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+                lexer_file_state_reinsert_token (state, &current_token);
                 break;
             }
 
@@ -2434,27 +2768,15 @@ static void lex_preprocessor_if (struct cushion_lexer_file_state_t *state,
 
         node->previous = state->conditional_inclusion_node;
         lexer_conditional_inclusion_node_init_state (node, CONDITIONAL_INCLUSION_STATE_PRESERVED);
-        node->line = state->tokenization.cursor_line;
+        node->line = start_line;
         state->conditional_inclusion_node = node;
-
-        if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u && start_line != state->tokenization.cursor_line)
-        {
-            lex_preprocessor_fixup_line (state);
-        }
 
         lex_preprocessor_preserved_tail (state, preprocessor_token->type, NULL);
         lex_update_tokenization_flags (state);
         return;
     }
 
-    // Safe to do this trick, as it is not deallocated until evaluation is shut down.
-    // And token is being processed right when evaluation is started, therefore it is also safe to pass it like that.
-    struct cushion_token_list_item_t push_first_token_item = {
-        .next = NULL,
-        .token = current_token,
-    };
-
-    lexer_file_state_push_tokens (state, &push_first_token_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+    lexer_file_state_reinsert_token (state, &current_token);
     const long long evaluation_result = lex_preprocessor_evaluate (state, LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_ROOT);
     LEX_WHEN_ERROR (return)
 
@@ -2465,10 +2787,9 @@ static void lex_preprocessor_if (struct cushion_lexer_file_state_t *state,
     node->previous = state->conditional_inclusion_node;
     lexer_conditional_inclusion_node_init_state (
         node, evaluation_result ? CONDITIONAL_INCLUSION_STATE_INCLUDED : CONDITIONAL_INCLUSION_STATE_EXCLUDED);
+
     node->line = start_line;
     state->conditional_inclusion_node = node;
-
-    lex_preprocessor_fixup_line (state);
     lex_update_tokenization_flags (state);
 }
 
@@ -2522,10 +2843,9 @@ static void lex_preprocessor_ifdef (struct cushion_lexer_file_state_t *state, un
     node->previous = state->conditional_inclusion_node;
     lexer_conditional_inclusion_node_init_state (
         node, check_result ? CONDITIONAL_INCLUSION_STATE_INCLUDED : CONDITIONAL_INCLUSION_STATE_EXCLUDED);
+
     node->line = start_line;
     state->conditional_inclusion_node = node;
-
-    lex_preprocessor_fixup_line (state);
     lex_update_tokenization_flags (state);
 }
 
@@ -2595,9 +2915,8 @@ static void lex_preprocessor_elif (struct cushion_lexer_file_state_t *state,
     lexer_conditional_inclusion_node_set_state (
         state->conditional_inclusion_node,
         evaluation_result ? CONDITIONAL_INCLUSION_STATE_INCLUDED : CONDITIONAL_INCLUSION_STATE_EXCLUDED);
-    state->conditional_inclusion_node->line = start_line;
 
-    lex_preprocessor_fixup_line (state);
+    state->conditional_inclusion_node->line = start_line;
     lex_update_tokenization_flags (state);
 }
 
@@ -2633,10 +2952,9 @@ static void lex_preprocessor_elifdef (struct cushion_lexer_file_state_t *state,
     lexer_conditional_inclusion_node_set_state (
         state->conditional_inclusion_node,
         check_result ? CONDITIONAL_INCLUSION_STATE_INCLUDED : CONDITIONAL_INCLUSION_STATE_EXCLUDED);
+
     state->conditional_inclusion_node->line = start_line;
     state->conditional_inclusion_node->flags |= CONDITIONAL_INCLUSION_FLAGS_HAD_PLAIN_ELSE;
-
-    lex_preprocessor_fixup_line (state);
     lex_update_tokenization_flags (state);
 }
 
@@ -2658,9 +2976,8 @@ static void lex_preprocessor_else (struct cushion_lexer_file_state_t *state,
 
     lexer_conditional_inclusion_node_set_state (state->conditional_inclusion_node,
                                                 CONDITIONAL_INCLUSION_STATE_INCLUDED);
-    state->conditional_inclusion_node->line = start_line;
 
-    lex_preprocessor_fixup_line (state);
+    state->conditional_inclusion_node->line = start_line;
     lex_update_tokenization_flags (state);
 }
 
@@ -2677,6 +2994,7 @@ static void lex_preprocessor_endif (struct cushion_lexer_file_state_t *state,
     if (state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_PRESERVED)
     {
         lex_preprocessor_preserved_tail (state, preprocessor_token->type, NULL);
+        state->conditional_inclusion_node = state->conditional_inclusion_node->previous;
         return;
     }
 
@@ -2685,7 +3003,6 @@ static void lex_preprocessor_endif (struct cushion_lexer_file_state_t *state,
     LEX_WHEN_ERROR (return)
 
     state->conditional_inclusion_node = state->conditional_inclusion_node->previous;
-    lex_preprocessor_fixup_line (state);
     lex_update_tokenization_flags (state);
 }
 
@@ -2733,10 +3050,24 @@ static unsigned int lex_preprocessor_try_include (struct cushion_lexer_file_stat
         }
     }
 
+    // Update line mark in order to avoid situations where #line directive is not starting on new line.
+    // Also, it makes it easier to debug what was included from where.
+    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    {
+        lex_update_line_mark (state, state->tokenization.file_name, state->tokenization.cursor_line);
+    }
+
     cushion_lex_file_from_handle (state->instance, input_file, state->path_buffer.data, flags);
     fclose (input_file);
     return 1u;
 }
+
+enum lex_include_result_t
+{
+    LEX_INCLUDE_RESULT_NOT_FOUND = 0u,
+    LEX_INCLUDE_RESULT_SCAN,
+    LEX_INCLUDE_RESULT_FULL,
+};
 
 static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
 {
@@ -2759,7 +3090,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
         return;
     }
 
-    unsigned int include_happened = 0u;
+    enum lex_include_result_t include_result = LEX_INCLUDE_RESULT_NOT_FOUND;
     if (current_token.type == CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER)
     {
         lexer_file_state_path_init (state, state->file_name);
@@ -2793,39 +3124,38 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
 
         if (lex_preprocessor_try_include (state, &current_token, NULL))
         {
-            include_happened = 1u;
+            include_result = LEX_INCLUDE_RESULT_FULL;
         }
     }
 
     struct cushion_include_node_t *node = state->instance->includes_first;
-    while (node && !include_happened)
+    while (node && include_result == LEX_INCLUDE_RESULT_NOT_FOUND)
     {
         if (lex_preprocessor_try_include (state, &current_token, node))
         {
-            include_happened = 1u;
+            include_result = node->type == INCLUDE_TYPE_FULL ? LEX_INCLUDE_RESULT_FULL : LEX_INCLUDE_RESULT_SCAN;
             break;
         }
 
         node = node->next;
     }
 
-    if (!include_happened && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    if (include_result == LEX_INCLUDE_RESULT_NOT_FOUND && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
         // Include not found. Preserve it in code.
+        lex_update_line_mark (state, state->tokenization.file_name, start_line);
         cushion_instance_output_null_terminated (state->instance, "#include ");
         cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
-        cushion_instance_output_null_terminated (state->instance, "\n");
     }
 
     lex_preprocessor_expect_new_line (state);
     LEX_WHEN_ERROR (return)
 
-    if (include_happened ||
-        // If there were multiline comments, we need to fixup line.
-        // Expected line is always start_line + 1, because we're read new line too.
-        start_line + 1u != state->tokenization.cursor_line)
+    if (include_result == LEX_INCLUDE_RESULT_FULL && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
-        lex_preprocessor_fixup_line (state);
+        cushion_instance_output_line_marker (state->instance, state->tokenization.cursor_line,
+                                             state->tokenization.file_name);
+        lex_on_line_mark_manually_updated (state, state->tokenization.file_name, state->tokenization.cursor_line);
     }
 
     lex_update_tokenization_flags (state);
@@ -2833,7 +3163,6 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
 
 static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
 {
-    const unsigned int start_line = state->tokenization.cursor_line;
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
     lex_skip_glue_and_comments (state, &current_token);
@@ -2944,12 +3273,6 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
     }
 
     case CUSHION_TOKEN_TYPE_NEW_LINE:
-        if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-        {
-            // Push this new line to preserve line numbers.
-            cushion_instance_output_null_terminated (state->instance, "\n");
-        }
-
         // No replacement list, go directly to registration.
         goto register_macro;
 
@@ -2969,23 +3292,16 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
     }
 
     // Lex replacement list.
-    enum cushion_lex_replacement_list_result_t lex_result =
-        cushion_lex_replacement_list (state->instance, &state->tokenization, &node->replacement_list_first);
+    enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list (
+        state->instance, &state->tokenization, &node->replacement_list_first, &node->flags);
+    LEX_WHEN_ERROR (return)
 
     switch (lex_result)
     {
     case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
-        // Fixup line after reading the macro.
-        lex_preprocessor_fixup_line (state);
         break;
 
     case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
-        if (start_line != state->tokenization.cursor_line)
-        {
-            // Fixup line if arguments and other things used line continuation.
-            lex_preprocessor_fixup_line (state);
-        }
-
         node->flags |= CUSHION_MACRO_FLAG_PRESERVED;
         lex_preprocessor_preserved_tail (state, CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE, node);
         break;
@@ -2999,7 +3315,7 @@ register_macro:
 
 static void lex_preprocessor_undef (struct cushion_lexer_file_state_t *state)
 {
-    unsigned int start_line = state->tokenization.cursor_line;
+    const unsigned int start_line = state->tokenization.cursor_line;
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
     lex_skip_glue_and_comments (state, &current_token);
@@ -3018,51 +3334,24 @@ static void lex_preprocessor_undef (struct cushion_lexer_file_state_t *state)
         // Preserve #undef as macro is either unknown or explicitly preserved.
         if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
         {
-            if (start_line != state->tokenization.cursor_line)
-            {
-                lex_preprocessor_fixup_line (state);
-                start_line = state->tokenization.cursor_line;
-            }
-
+            lex_update_line_mark (state, state->tokenization.file_name, start_line);
             cushion_instance_output_null_terminated (state->instance, "#undef ");
             cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
-            cushion_instance_output_null_terminated (state->instance, "\n");
         }
 
         lex_preprocessor_expect_new_line (state);
         LEX_WHEN_ERROR (return)
-
-        if (start_line + 1u != state->tokenization.cursor_line)
-        {
-            lex_preprocessor_fixup_line (state);
-        }
-
         lex_update_tokenization_flags (state);
         return;
     }
 
     cushion_instance_macro_remove (state->instance, current_token.begin, current_token.end);
-    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-    {
-        cushion_instance_output_null_terminated (state->instance, "\n");
-    }
-
     lex_preprocessor_expect_new_line (state);
-    if (start_line + 1u != state->tokenization.cursor_line)
-    {
-        lex_preprocessor_fixup_line (state);
-    }
-
     lex_update_tokenization_flags (state);
 }
 
 static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
 {
-    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-    {
-        cushion_instance_output_null_terminated (state->instance, "#line ");
-    }
-
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
     lex_skip_glue_and_comments (state, &current_token);
@@ -3075,12 +3364,6 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
             "Expected integer line number after #line. Standard allows arbitrary preprocessor-evaluable expressions "
             "for line number calculations, but it is not yet supported in Cushion as it is a rare case.");
         return;
-    }
-
-    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-    {
-        cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
-        cushion_instance_output_null_terminated (state->instance, " ");
     }
 
     const unsigned long long line_number = current_token.unsigned_number_value;
@@ -3099,11 +3382,6 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
     {
     case CUSHION_TOKEN_TYPE_STRING_LITERAL:
     {
-        if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-        {
-            cushion_instance_output_sequence (state->instance, current_token.begin, current_token.end);
-        }
-
         new_file_name = cushion_allocator_allocate (
             &state->instance->allocator, current_token.symbolic_literal.end - current_token.symbolic_literal.begin + 1u,
             _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
@@ -3180,11 +3458,6 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
         return;
     }
 
-    if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
-    {
-        cushion_instance_output_null_terminated (state->instance, "\n");
-    }
-
     if (new_file_name)
     {
         state->tokenization.file_name = new_file_name;
@@ -3246,17 +3519,11 @@ static void lex_preprocessor_pragma (struct cushion_lexer_file_state_t *state)
         lex_preprocessor_expect_new_line (state);
         LEX_WHEN_ERROR (return)
 
-        lex_preprocessor_fixup_line (state);
         lex_update_tokenization_flags (state);
         return;
     }
 
-    struct cushion_token_list_item_t push_first_token_item = {
-        .next = NULL,
-        .token = current_token,
-    };
-
-    lexer_file_state_push_tokens (state, &push_first_token_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+    lexer_file_state_reinsert_token (state, &current_token);
     lex_preprocessor_preserved_tail (state, CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA, NULL);
     lex_update_tokenization_flags (state);
 }
@@ -3284,7 +3551,7 @@ static inline void lex_skip_glue_comments_new_line (struct cushion_lexer_file_st
 
 static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
 {
-    const unsigned int start_line = state->tokenization.cursor_line;
+    const unsigned int start_line = state->last_marked_line;
     struct cushion_token_t current_token;
     lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
@@ -3317,8 +3584,7 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
     // New line addition (even if it was necessary) breaks line numbering for errors,
     // therefore we need to add line directive before it too.
 
-    cushion_instance_output_null_terminated (state->instance, "\n");
-    cushion_instance_output_line_marker (state->instance, start_line, state->tokenization.file_name);
+    lex_update_line_mark (state, state->tokenization.file_name, start_line);
     cushion_instance_output_null_terminated (state->instance, "#pragma ");
 
     const char *output_begin_cursor = current_token.symbolic_literal.begin;
@@ -3367,6 +3633,7 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
     }
 
     cushion_instance_output_null_terminated (state->instance, "\n");
+    lex_on_line_mark_manually_updated (state, state->tokenization.file_name, start_line + 1u);
     lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
@@ -3377,9 +3644,6 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
                                           "Expected \")\" after _Pragma argument.");
         return;
     }
-
-    // Always fixup line as pragma output results in new line.
-    lex_preprocessor_fixup_line (state);
 }
 
 static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struct cushion_token_t *current_token)
@@ -3400,30 +3664,26 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struc
         formatted_file_name[file_name_length - 2u] = '"';
         formatted_file_name[file_name_length - 1u] = '\0';
 
-        struct cushion_token_list_item_t push_file_name_item = {
-            .next = NULL,
-            .token =
+        struct cushion_token_t token = {
+            .type = CUSHION_TOKEN_TYPE_STRING_LITERAL,
+            .begin = formatted_file_name,
+            .end = formatted_file_name + file_name_length + 2u,
+            .symbolic_literal =
                 {
-                    .type = CUSHION_TOKEN_TYPE_STRING_LITERAL,
-                    .begin = formatted_file_name,
-                    .end = formatted_file_name + file_name_length + 2u,
-                    .symbolic_literal =
-                        {
-                            .encoding = CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY,
-                            .begin = formatted_file_name + 1u,
-                            .end = formatted_file_name + file_name_length + 1u,
-                        },
+                    .encoding = CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY,
+                    .begin = formatted_file_name + 1u,
+                    .end = formatted_file_name + file_name_length + 1u,
                 },
         };
 
-        lexer_file_state_push_tokens (state, &push_file_name_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+        lexer_file_state_reinsert_token (state, &token);
         return;
     }
 
     case CUSHION_IDENTIFIER_KIND_LINE:
     {
         // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
-        unsigned int value = state->tokenization.cursor_line;
+        unsigned int value = state->last_marked_line;
         unsigned int string_length = 0u;
 
         if (value > 0u)
@@ -3458,18 +3718,14 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struc
             formatted_literal[0u] = '0';
         }
 
-        struct cushion_token_list_item_t push_file_line_item = {
-            .next = NULL,
-            .token =
-                {
-                    .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
-                    .begin = formatted_literal,
-                    .end = formatted_literal + string_length,
-                    .unsigned_number_value = state->tokenization.cursor_line,
-                },
+        struct cushion_token_t token = {
+            .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
+            .begin = formatted_literal,
+            .end = formatted_literal + string_length,
+            .unsigned_number_value = state->last_marked_line,
         };
 
-        lexer_file_state_push_tokens (state, &push_file_line_item, LEXER_TOKEN_STACK_ITEM_FLAG_NONE);
+        lexer_file_state_reinsert_token (state, &token);
         return;
     }
 
@@ -3568,6 +3824,10 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     state->flags = flags;
     state->instance = instance;
     state->token_stack_top = NULL;
+    state->stack_exit_file = NULL;
+    state->stack_exit_line = 1u;
+    state->last_marked_file = state->file_name;
+    state->last_marked_line = 1u;
     state->conditional_inclusion_node = NULL;
 
     // We need to always convert file path to absolute in order to have proper line directives everywhere.
@@ -3592,25 +3852,59 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
 
     struct cushion_token_t current_token;
     current_token.type = CUSHION_TOKEN_TYPE_NEW_LINE; // Just stub value.
-    unsigned int previous_token_line = state->tokenization.cursor_line;
-    enum lexer_token_stack_item_flags_t current_token_flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE;
+
+    struct lexer_pop_token_meta_t current_token_meta = {
+        .flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE,
+        .file = state->tokenization.file_name,
+        .line = state->tokenization.cursor_line,
+    };
 
     while (lexer_file_state_should_continue (state))
     {
         const unsigned int previous_is_macro_replacement =
-            current_token_flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT;
-        enum cushion_token_type_t previous_type = current_token.type;
+            current_token_meta.flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT;
 
-        current_token_flags = lexer_file_state_pop_token (state, &current_token);
+        const enum cushion_token_type_t previous_type = current_token.type;
+        current_token_meta = lexer_file_state_pop_token (state, &current_token);
+
         if (cushion_instance_is_error_signaled (instance))
         {
             break;
         }
 
-        if (!(flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) && previous_is_macro_replacement &&
-            lex_is_separator_needed_for_token_pair (previous_type, current_token.type))
+        if (current_token.type == CUSHION_TOKEN_TYPE_NEW_LINE || current_token.type == CUSHION_TOKEN_TYPE_COMMENT)
         {
-            cushion_instance_output_null_terminated (instance, " ");
+            // We treat these tokens as insignificant and fix lines and line numbers after them using separate logic.
+            continue;
+        }
+
+        if ((flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u &&
+            (!state->conditional_inclusion_node ||
+             state->conditional_inclusion_node->state != CONDITIONAL_INCLUSION_STATE_EXCLUDED))
+        {
+            // Check line number and add marker if needed.
+            if (lex_is_preprocessor_token_type (current_token.type) ||
+                lex_update_line_mark (state, current_token_meta.file, current_token_meta.line))
+            {
+                // Everything is done in conditional, if is only needed for else clauses.
+            }
+            // Add separator for macro replacement tokens if needed.
+            else if (previous_is_macro_replacement &&
+                     lex_is_separator_needed_for_token_pair (previous_type, current_token.type) &&
+                     // Special case: _Pragma is always separate by new lines, therefore we don't need whitespace.
+                     (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER ||
+                      current_token.identifier_kind != CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA))
+            {
+                cushion_instance_output_null_terminated (instance, " ");
+            }
+            // If previous was comment, add separator just in case.
+            else if (previous_type == CUSHION_TOKEN_TYPE_COMMENT &&
+                     (current_token.type != CUSHION_TOKEN_TYPE_GLUE &&
+                      current_token.type != CUSHION_TOKEN_TYPE_NEW_LINE &&
+                      !lex_is_preprocessor_token_type (current_token.type)))
+            {
+                cushion_instance_output_null_terminated (state->instance, " ");
+            }
         }
 
         switch (current_token.type)
@@ -3707,25 +4001,14 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
         case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
         case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
         case CUSHION_TOKEN_TYPE_STRING_LITERAL:
-        case CUSHION_TOKEN_TYPE_NEW_LINE:
         case CUSHION_TOKEN_TYPE_GLUE:
         case CUSHION_TOKEN_TYPE_OTHER:
             cushion_instance_output_sequence (instance, current_token.begin, current_token.end);
             break;
 
+        case CUSHION_TOKEN_TYPE_NEW_LINE:
         case CUSHION_TOKEN_TYPE_COMMENT:
-            // If it was a multiline comment, fixup line number.
-            if (previous_token_line != state->tokenization.cursor_line)
-            {
-                cushion_instance_output_null_terminated (state->instance, "\n");
-                lex_preprocessor_fixup_line (state);
-            }
-            else
-            {
-                // Just a space to make sure that tokens are not merged by mistake.
-                cushion_instance_output_null_terminated (state->instance, " ");
-            }
-
+            // Processed separately as part of line fixing routine.
             break;
 
         case CUSHION_TOKEN_TYPE_END_OF_FILE:
@@ -3739,8 +4022,6 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
 
             break;
         }
-
-        previous_token_line = state->tokenization.cursor_line;
     }
 
     // Currently there is no safe way to reset transient data except for the end of file lexing.

@@ -159,8 +159,8 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
             cushion_tokenization_state_init_for_argument_string (
                 &tokenization_state, macro_node->value, &instance->allocator, CUSHION_ALLOCATION_CLASS_TRANSIENT);
 
-            enum cushion_lex_replacement_list_result_t lex_result =
-                cushion_lex_replacement_list (instance, &tokenization_state, &macro_node->replacement_list_first);
+            enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list (
+                instance, &tokenization_state, &macro_node->replacement_list_first, &macro_node->flags);
 
             if (cushion_instance_is_error_signaled (instance))
             {
@@ -177,6 +177,16 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
                          macro_node->name);
                 result = CUSHION_RESULT_FAILED_TO_LEX_CONFIGURED_DEFINES;
             }
+#if defined(CUSHION_EXTENSIONS)
+            else if (macro_node->flags & CUSHION_MACRO_FLAG_WRAPPED)
+            {
+                fprintf (stderr,
+                         "Object macro \"%s\" from arguments cannot use __CUSHION_WRAPPED__, this feature is only "
+                         "supported for macro defined in code.\n",
+                         macro_node->name);
+                result = CUSHION_RESULT_FAILED_TO_LEX_CONFIGURED_DEFINES;
+            }
+#endif
             else
             {
                 switch (lex_result)
