@@ -159,6 +159,10 @@ making it very difficult to fix compilation errors and making it impossible to d
 `__CUSHION_WRAPPED__` is guaranteed to save lines inside wrapped block, making fixing compilation and debugging as easy 
 as with usual code block.
 
+Also, it is allowed to use directives like `#define`, `#line` and `#undef` inside `__CUSHION_WRAPPED__` blocks: they
+will be correctly unwrapped there. But beware that `__CUSHION_WRAPPED__` might be pasted several times, therefore if
+you use `#define`, you also need to use `#undef` for the same macro in order to avoid duplication.
+
 ### Statement accumulators
 
 Statement accumulators are a framework for conditionally generating code in one place from another place. This feature

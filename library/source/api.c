@@ -159,7 +159,7 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
             cushion_tokenization_state_init_for_argument_string (
                 &tokenization_state, macro_node->value, &instance->allocator, CUSHION_ALLOCATION_CLASS_TRANSIENT);
 
-            enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list (
+            enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list_from_tokenization (
                 instance, &tokenization_state, &macro_node->replacement_list_first, &macro_node->flags);
 
             if (cushion_instance_is_error_signaled (instance))

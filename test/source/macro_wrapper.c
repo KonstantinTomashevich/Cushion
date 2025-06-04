@@ -25,8 +25,10 @@ int main (int argc, char **argv)
 {
     TEST_WRAPPER_WITH_ARGS (node->value > 10)
     {
-        printf ("Node value: %d.\n", (int) node->value);
+#define GET_VALUE(NODE) ((NODE)->value)
+        printf ("Node value: %d.\n", (int) GET_VALUE (node));
         printf ("Node pointer: %p.\n", (void *) node);
+#undef GET_VALUE
     }
 
     return 0;

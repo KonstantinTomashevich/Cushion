@@ -1,136 +1,5 @@
 #include "internal.h"
 
-enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
-    struct cushion_instance_t *instance,
-    struct cushion_tokenization_state_t *tokenization_state,
-    struct cushion_token_list_item_t **token_list_output,
-    enum cushion_macro_flags_t *flags_output)
-{
-    *token_list_output = NULL;
-    struct cushion_token_list_item_t *first = NULL;
-    struct cushion_token_list_item_t *last = NULL;
-    struct cushion_token_t current_token;
-    unsigned int lexing = 1u;
-    
-    // TODO: We need to use lexer state here if we want to support preprocessor directives inside __CUSHION_WRAPPED__.
-
-    while (lexing)
-    {
-        cushion_tokenization_next_token (instance, tokenization_state, &current_token);
-        if (cushion_instance_is_error_signaled (instance))
-        {
-            cushion_instance_signal_error (instance);
-            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
-        }
-
-#define SAVE_AND_APPEND_TOKEN_TO_LIST                                                                                  \
-    {                                                                                                                  \
-        struct cushion_token_list_item_t *new_token_item =                                                             \
-            cushion_save_token_to_memory (instance, &current_token, CUSHION_ALLOCATION_CLASS_PERSISTENT);              \
-                                                                                                                       \
-        /* We do not save file and line info in replacement lists as this is not how macros usually work. */           \
-        if (last)                                                                                                      \
-        {                                                                                                              \
-            last->next = new_token_item;                                                                               \
-        }                                                                                                              \
-        else                                                                                                           \
-        {                                                                                                              \
-            first = new_token_item;                                                                                    \
-        }                                                                                                              \
-                                                                                                                       \
-        last = new_token_item;                                                                                         \
-    }
-
-        switch (current_token.type)
-        {
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
-        case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
-            cushion_instance_execution_error (
-                instance, tokenization_state,
-                "Encountered preprocessor directive while lexing replacement list. Shouldn't be "
-                "possible at all, can be an internal error.");
-            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
-
-        case CUSHION_TOKEN_TYPE_IDENTIFIER:
-            switch (current_token.identifier_kind)
-            {
-            case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
-                if (first)
-                {
-                    cushion_instance_execution_error (
-                        instance, tokenization_state,
-                        "Encountered __CUSHION_PRESERVE__ while lexing replacement list and it is not first "
-                        "replacement-list-significant token. When using __CUSHION_PRESERVE__ to avoid unwrapping "
-                        "macro, it must always be the first thing in the replacement list.");
-                    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
-                }
-
-                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
-
-#if defined(CUSHION_EXTENSIONS)
-            case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
-                if (cushion_instance_has_feature (instance, CUSHION_FEATURE_WRAPPER_MACRO))
-                {
-                    *flags_output |= CUSHION_MACRO_FLAG_WRAPPED;
-                }
-                else
-                {
-                    cushion_instance_execution_error (instance, tokenization_state,
-                                                      "Encountered __CUSHION_WRAPPED__, but this feature is not "
-                                                      "enabled in current execution context.");
-                    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
-                }
-
-                break;
-#endif
-
-            default:
-                break;
-            }
-
-            SAVE_AND_APPEND_TOKEN_TO_LIST
-            break;
-
-        case CUSHION_TOKEN_TYPE_PUNCTUATOR:
-        case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
-        case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
-        case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
-        case CUSHION_TOKEN_TYPE_STRING_LITERAL:
-        case CUSHION_TOKEN_TYPE_OTHER:
-            SAVE_AND_APPEND_TOKEN_TO_LIST
-            break;
-
-        case CUSHION_TOKEN_TYPE_NEW_LINE:
-        case CUSHION_TOKEN_TYPE_END_OF_FILE:
-            lexing = 0u;
-            break;
-
-        case CUSHION_TOKEN_TYPE_GLUE:
-        case CUSHION_TOKEN_TYPE_COMMENT:
-            // Glue and comments are ignored in replacement lists as replacements newer preserve formatting.
-            break;
-        }
-
-#undef SAVE_AND_APPEND_TOKEN_TO_LIST
-    }
-
-    *token_list_output = first;
-    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
-}
-
 enum lexer_token_stack_item_flags_t
 {
     LEXER_TOKEN_STACK_ITEM_FLAG_NONE = 0u,
@@ -338,6 +207,217 @@ static inline void lexer_file_state_path_append_sequence (struct cushion_lexer_f
     memcpy (state->path_buffer.data + state->path_buffer.size, sequence_begin, in_size);
     state->path_buffer.size += in_size;
     state->path_buffer.data[state->path_buffer.size] = '\0';
+}
+
+/// \details We need to be able to properly parse replacement lists from both command line arguments that has only
+///          tokenization state and from code (has lexer state and it is possible to use directives in
+///          __CUSHION_WRAPPED__ code). Therefore, we need context and two functions.
+struct cushion_lex_replacement_list_context_t
+{
+    struct cushion_instance_t *instance;
+    struct cushion_tokenization_state_t *tokenization_state;
+    enum cushion_macro_flags_t *flags_output;
+
+    struct cushion_token_list_item_t *first;
+    struct cushion_token_list_item_t *last;
+
+    struct cushion_token_t current_token;
+    unsigned int lexing;
+};
+
+static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_step (
+    struct cushion_lex_replacement_list_context_t *context)
+{
+#define SAVE_AND_APPEND_TOKEN_TO_LIST                                                                                  \
+    {                                                                                                                  \
+        struct cushion_token_list_item_t *new_token_item = cushion_save_token_to_memory (                              \
+            context->instance, &context->current_token, CUSHION_ALLOCATION_CLASS_PERSISTENT);                          \
+                                                                                                                       \
+        /* We do not save file and line info in replacement lists as this is not how macros usually work. */           \
+        if (context->last)                                                                                             \
+        {                                                                                                              \
+            context->last->next = new_token_item;                                                                      \
+        }                                                                                                              \
+        else                                                                                                           \
+        {                                                                                                              \
+            context->first = new_token_item;                                                                           \
+        }                                                                                                              \
+                                                                                                                       \
+        context->last = new_token_item;                                                                                \
+    }
+
+    switch (context->current_token.type)
+    {
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+    case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+        // TODO: We might need to rework error printing system to properly print errors inside __CUSHION_WRAPPED__.
+        cushion_instance_execution_error (
+            context->instance, context->tokenization_state,
+            "Encountered preprocessor directive while lexing replacement list. Shouldn't be "
+            "possible at all, can be an internal error.");
+        return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+
+    case CUSHION_TOKEN_TYPE_IDENTIFIER:
+        switch (context->current_token.identifier_kind)
+        {
+        case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
+            if (context->first)
+            {
+                cushion_instance_execution_error (
+                    context->instance, context->tokenization_state,
+                    "Encountered __CUSHION_PRESERVE__ while lexing replacement list and it is not first "
+                    "replacement-list-significant token. When using __CUSHION_PRESERVE__ to avoid unwrapping "
+                    "macro, it must always be the first thing in the replacement list.");
+                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+            }
+
+            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
+
+#if defined(CUSHION_EXTENSIONS)
+        case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
+            if (cushion_instance_has_feature (context->instance, CUSHION_FEATURE_WRAPPER_MACRO))
+            {
+                *context->flags_output |= CUSHION_MACRO_FLAG_WRAPPED;
+            }
+            else
+            {
+                cushion_instance_execution_error (context->instance, context->tokenization_state,
+                                                  "Encountered __CUSHION_WRAPPED__, but this feature is not "
+                                                  "enabled in current execution context.");
+                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+            }
+
+            break;
+#endif
+
+        default:
+            break;
+        }
+
+        SAVE_AND_APPEND_TOKEN_TO_LIST
+        break;
+
+    case CUSHION_TOKEN_TYPE_PUNCTUATOR:
+    case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
+    case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
+    case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
+    case CUSHION_TOKEN_TYPE_STRING_LITERAL:
+    case CUSHION_TOKEN_TYPE_OTHER:
+        SAVE_AND_APPEND_TOKEN_TO_LIST
+        break;
+
+    case CUSHION_TOKEN_TYPE_NEW_LINE:
+    case CUSHION_TOKEN_TYPE_END_OF_FILE:
+        context->lexing = 0u;
+        break;
+
+    case CUSHION_TOKEN_TYPE_GLUE:
+    case CUSHION_TOKEN_TYPE_COMMENT:
+        // Glue and comments are ignored in replacement lists as replacements newer preserve formatting.
+        break;
+    }
+
+#undef SAVE_AND_APPEND_TOKEN_TO_LIST
+    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+}
+
+enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_tokenization (
+    struct cushion_instance_t *instance,
+    struct cushion_tokenization_state_t *tokenization_state,
+    struct cushion_token_list_item_t **token_list_output,
+    enum cushion_macro_flags_t *flags_output)
+{
+    struct cushion_lex_replacement_list_context_t context = {
+        .instance = instance,
+        .tokenization_state = tokenization_state,
+        .flags_output = flags_output,
+        .first = NULL,
+        .last = NULL,
+        .lexing = 1u,
+    };
+
+    *token_list_output = NULL;
+    while (context.lexing)
+    {
+        cushion_tokenization_next_token (instance, tokenization_state, &context.current_token);
+        if (cushion_instance_is_error_signaled (instance))
+        {
+            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+        }
+
+        switch (cushion_lex_replacement_list_step (&context))
+        {
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
+            if (cushion_instance_is_error_signaled (instance))
+            {
+                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+            }
+
+            break;
+
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
+            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
+        }
+    }
+
+    *token_list_output = context.first;
+    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+}
+
+enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_lexer (
+    struct cushion_instance_t *instance,
+    struct cushion_lexer_file_state_t *lexer_state,
+    struct cushion_token_list_item_t **token_list_output,
+    enum cushion_macro_flags_t *flags_output)
+{
+    struct cushion_lex_replacement_list_context_t context = {
+        .instance = instance,
+        .tokenization_state = &lexer_state->tokenization,
+        .flags_output = flags_output,
+        .first = NULL,
+        .last = NULL,
+        .lexing = 1u,
+    };
+
+    *token_list_output = NULL;
+    while (context.lexing)
+    {
+        lexer_file_state_pop_token (lexer_state, &context.current_token);
+        if (cushion_instance_is_error_signaled (instance))
+        {
+            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+        }
+
+        switch (cushion_lex_replacement_list_step (&context))
+        {
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
+            if (cushion_instance_is_error_signaled (instance))
+            {
+                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+            }
+
+            break;
+
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
+            return CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED;
+        }
+    }
+
+    *token_list_output = context.first;
+    return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
 }
 
 struct lex_macro_argument_t
@@ -3292,8 +3372,8 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
     }
 
     // Lex replacement list.
-    enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list (
-        state->instance, &state->tokenization, &node->replacement_list_first, &node->flags);
+    enum cushion_lex_replacement_list_result_t lex_result =
+        cushion_lex_replacement_list_from_lexer (state->instance, state, &node->replacement_list_first, &node->flags);
     LEX_WHEN_ERROR (return)
 
     switch (lex_result)

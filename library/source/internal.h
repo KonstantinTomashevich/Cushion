@@ -620,7 +620,7 @@ enum cushion_lex_replacement_list_result_t
     CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED,
 };
 
-enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list (
+enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_tokenization (
     struct cushion_instance_t *instance,
     struct cushion_tokenization_state_t *tokenization_state,
     struct cushion_token_list_item_t **token_list_output,
@@ -648,7 +648,7 @@ struct cushion_lexer_file_state_t
     struct lexer_token_stack_item_t *token_stack_top;
 
     const char *stack_exit_file;
-    
+
     /// \details stack_exit_line along with stack_exit_file makes it easy to properly restore line numbers after
     ///          exiting macro replacement and similar operations.
     unsigned int stack_exit_line;
