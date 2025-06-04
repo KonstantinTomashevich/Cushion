@@ -227,7 +227,7 @@ struct cushion_macro_node_t *cushion_instance_macro_search (struct cushion_insta
 
 void cushion_instance_macro_add (struct cushion_instance_t *instance,
                                  struct cushion_macro_node_t *node,
-                                 struct cushion_tokenization_state_t *tokenization_state_for_logging)
+                                 struct cushion_error_context_t error_context)
 {
     node->name_hash = cushion_hash_djb2_null_terminated (node->name);
     // To have consistent behavior, calculate parameter hashes here too.
@@ -248,8 +248,8 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
         if (cushion_instance_has_option (instance, CUSHION_OPTION_FORBID_MACRO_REDEFINITION) &&
             (instance->state_flags & CUSHION_INSTANCE_STATE_FLAG_EXECUTION))
         {
-            cushion_instance_execution_error (instance, tokenization_state_for_logging,
-                                              "Encountered macro \"%s\" redefinition.", node->name);
+            cushion_instance_execution_error (instance, error_context, "Encountered macro \"%s\" redefinition.",
+                                              node->name);
         }
         else
         {
@@ -452,27 +452,21 @@ void cushion_instance_output_depfile_entry (struct cushion_instance_t *instance,
     }
 }
 
-void cushion_instance_execution_error (struct cushion_instance_t *instance,
-                                       struct cushion_tokenization_state_t *state,
-                                       const char *format,
-                                       ...)
+void cushion_instance_execution_error_internal (struct cushion_instance_t *instance,
+                                                struct cushion_error_context_t context,
+                                                const char *format,
+                                                va_list variadic_arguments)
 {
-    va_list variadic_arguments;
-    va_start (variadic_arguments, format);
-
-    if (state)
+    if (context.column != UINT_MAX)
     {
-        fprintf (stderr, "[%s:%u:%u] ", state->file_name, (unsigned int) state->cursor_line,
-                 (unsigned int) state->cursor_column);
+        fprintf (stderr, "[%s:%u:%u] ", context.file, (unsigned int) context.line, (unsigned int) context.column);
     }
     else
     {
-        fprintf (stderr, "[<no-file>:0:0] ");
+        fprintf (stderr, "[%s:%u] ", context.file, (unsigned int) context.line);
     }
 
     vfprintf (stderr, format, variadic_arguments);
-    va_end (variadic_arguments);
-
     fprintf (stderr, "\n");
     cushion_instance_signal_error (instance);
 }

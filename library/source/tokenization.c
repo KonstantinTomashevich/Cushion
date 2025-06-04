@@ -5,6 +5,23 @@ struct re2c_tags_t
     /*!stags:re2c format = 'const char *@@;';*/
 };
 
+static inline void cushion_instance_tokenization_error (struct cushion_instance_t *instance,
+                                                        struct cushion_tokenization_state_t *tokenization,
+                                                        const char *format,
+                                                        ...)
+{
+    va_list variadic_arguments;
+    va_start (variadic_arguments, format);
+    cushion_instance_execution_error_internal (instance,
+                                               (struct cushion_error_context_t) {
+                                                   .file = tokenization->file_name,
+                                                   .line = tokenization->cursor_line,
+                                                   .column = tokenization->cursor_column,
+                                               },
+                                               format, variadic_arguments);
+    va_end (variadic_arguments);
+}
+
 void cushion_tokenization_state_init_for_argument_string (struct cushion_tokenization_state_t *state,
                                                           const char *string,
                                                           struct cushion_allocator_t *allocator,
@@ -98,7 +115,7 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
             return CUSHION_INTERNAL_RESULT_FAILED;
         }
 
-        cushion_instance_execution_error (
+        cushion_instance_tokenization_error (
             instance, state, "Encountered lexeme overflow, %s.",
             state->guardrail == preserve_from ? "guardrail is a culprit" : "guardrail was not used");
         return CUSHION_INTERNAL_RESULT_FAILED;
@@ -625,7 +642,7 @@ start_next_token:
              if (tokenize_decimal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
                  CUSHION_INTERNAL_RESULT_OK)
              {
-                 cushion_instance_execution_error (instance, state, "Failed to parse number due to overflow.");
+                 cushion_instance_tokenization_error (instance, state, "Failed to parse number due to overflow.");
                  return;
              }
 
@@ -634,7 +651,7 @@ start_next_token:
 
          decimal_integer identifier
          {
-             cushion_instance_execution_error (instance, state, "Caught decimal integer with unknown suffix.");
+             cushion_instance_tokenization_error (instance, state, "Caught decimal integer with unknown suffix.");
              return;
          }
 
@@ -643,7 +660,7 @@ start_next_token:
              if (tokenize_octal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
                  CUSHION_INTERNAL_RESULT_OK)
              {
-                 cushion_instance_execution_error (instance, state, "Failed to parse number due to overflow.");
+                 cushion_instance_tokenization_error (instance, state, "Failed to parse number due to overflow.");
                  return;
              }
 
@@ -652,7 +669,7 @@ start_next_token:
 
          octal_integer identifier
          {
-             cushion_instance_execution_error (instance, state, "Caught octal integer with unknown suffix.");
+             cushion_instance_tokenization_error (instance, state, "Caught octal integer with unknown suffix.");
              return;
          }
 
@@ -661,7 +678,7 @@ start_next_token:
              if (tokenize_hex_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
                  CUSHION_INTERNAL_RESULT_OK)
              {
-                 cushion_instance_execution_error (instance, state, "Failed to parse number due to overflow.");
+                 cushion_instance_tokenization_error (instance, state, "Failed to parse number due to overflow.");
                  return;
              }
 
@@ -670,7 +687,7 @@ start_next_token:
 
          hex_integer identifier
          {
-             cushion_instance_execution_error (instance, state, "Caught hex integer with unknown suffix.");
+             cushion_instance_tokenization_error (instance, state, "Caught hex integer with unknown suffix.");
              return;
          }
 
@@ -679,7 +696,7 @@ start_next_token:
              if (tokenize_binary_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
                  CUSHION_INTERNAL_RESULT_OK)
              {
-                 cushion_instance_execution_error (instance, state, "Failed to parse number due to overflow.");
+                 cushion_instance_tokenization_error (instance, state, "Failed to parse number due to overflow.");
                  return;
              }
 
@@ -688,7 +705,7 @@ start_next_token:
 
          binary_integer identifier
          {
-             cushion_instance_execution_error (instance, state, "Caught binary integer with unknown suffix.");
+             cushion_instance_tokenization_error (instance, state, "Caught binary integer with unknown suffix.");
              return;
          }
 
@@ -920,7 +937,7 @@ start_next_token:
              if (tokenize_decimal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
                  CUSHION_INTERNAL_RESULT_OK)
              {
-                 cushion_instance_execution_error (instance, state, "Failed to line number for #line directive.");
+                 cushion_instance_tokenization_error (instance, state, "Failed to line number for #line directive.");
                  return;
              }
 
@@ -930,7 +947,7 @@ start_next_token:
          // Unsupported number formats for #line.
          "0" [oOxXbB]? @marker_sub_begin [0-9a-fA-F']+ @marker_sub_end
          {
-             cushion_instance_execution_error (instance, state,
+             cushion_instance_tokenization_error (instance, state,
                      "Got line number in #line directive in format unsupported by standard.");
              return;
          }
@@ -953,5 +970,5 @@ start_next_token:
 #undef PREPROCESSOR_EMIT_TOKEN_IDENTIFIER
 #undef PREPROCESSOR_EMIT_TOKEN
 
-    cushion_instance_execution_error (instance, state, "Unexpected way to exit tokenizer, internal error.");
+    cushion_instance_tokenization_error (instance, state, "Unexpected way to exit tokenizer, internal error.");
 }

@@ -192,7 +192,12 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
                 switch (lex_result)
                 {
                 case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
-                    cushion_instance_macro_add (instance, macro_node, NULL);
+                    cushion_instance_macro_add (instance, macro_node,
+                                                (struct cushion_error_context_t) {
+                                                    .file = "<arguments>",
+                                                    .line = 1u,
+                                                    .column = UINT_MAX,
+                                                });
                     break;
 
                 case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:

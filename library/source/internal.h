@@ -276,12 +276,30 @@ struct cushion_macro_node_t *cushion_instance_macro_search (struct cushion_insta
                                                             const char *name_begin,
                                                             const char *name_end);
 
-struct cushion_tokenization_state_t;
+struct cushion_error_context_t
+{
+    const char *file;
+    unsigned int line;
 
-void cushion_instance_execution_error (struct cushion_instance_t *instance,
-                                       struct cushion_tokenization_state_t *state,
-                                       const char *format,
-                                       ...);
+    /// \invariant Must be UINT_MAX if there is no column info.
+    unsigned int column;
+};
+
+void cushion_instance_execution_error_internal (struct cushion_instance_t *instance,
+                                                struct cushion_error_context_t context,
+                                                const char *format,
+                                                va_list variadic_arguments);
+
+static inline void cushion_instance_execution_error (struct cushion_instance_t *instance,
+                                                     struct cushion_error_context_t context,
+                                                     const char *format,
+                                                     ...)
+{
+    va_list variadic_arguments;
+    va_start (variadic_arguments, format);
+    cushion_instance_execution_error_internal (instance, context, format, variadic_arguments);
+    va_end (variadic_arguments);
+}
 
 static inline void cushion_instance_signal_error (struct cushion_instance_t *instance)
 {
@@ -307,7 +325,7 @@ static inline unsigned int cushion_instance_has_feature (struct cushion_instance
 
 void cushion_instance_macro_add (struct cushion_instance_t *instance,
                                  struct cushion_macro_node_t *node,
-                                 struct cushion_tokenization_state_t *tokenization_state_for_logging);
+                                 struct cushion_error_context_t error_context);
 
 void cushion_instance_macro_remove (struct cushion_instance_t *instance, const char *name_begin, const char *name_end);
 

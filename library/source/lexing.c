@@ -104,6 +104,46 @@ struct lexer_pop_token_meta_t
     unsigned int line;
 };
 
+static inline struct cushion_error_context_t lex_error_context (struct cushion_lexer_file_state_t *state,
+                                                                const struct lexer_pop_token_meta_t *meta)
+{
+    struct cushion_error_context_t context = {
+        .file = meta->file,
+        .line = meta->line,
+        .column = UINT_MAX,
+    };
+
+    if (state->last_marked_line == meta->line &&
+        (state->last_marked_file == meta->file || strcmp (state->file_name, meta->file) == 0))
+    {
+        context.column = state->tokenization.cursor_column;
+    }
+
+    return context;
+}
+
+static inline struct cushion_error_context_t tokenization_error_context (
+    struct cushion_tokenization_state_t *tokenization_state)
+{
+    return (struct cushion_error_context_t) {
+        .file = tokenization_state->file_name,
+        .line = tokenization_state->cursor_line,
+        .column = tokenization_state->cursor_column,
+    };
+}
+
+static inline void cushion_instance_lexer_error (struct cushion_lexer_file_state_t *state,
+                                                 const struct lexer_pop_token_meta_t *meta,
+                                                 const char *format,
+                                                 ...)
+{
+    va_list variadic_arguments;
+    va_start (variadic_arguments, format);
+    cushion_instance_execution_error_internal (state->instance, lex_error_context (state, meta), format,
+                                               variadic_arguments);
+    va_end (variadic_arguments);
+}
+
 static struct lexer_pop_token_meta_t lexer_file_state_pop_token (struct cushion_lexer_file_state_t *state,
                                                                  struct cushion_token_t *output)
 {
@@ -164,7 +204,7 @@ static inline void lexer_file_state_path_init (struct cushion_lexer_file_state_t
     const size_t in_size = strlen (data);
     if (in_size + 1u > CUSHION_PATH_BUFFER_SIZE)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
+        cushion_instance_execution_error (state->instance, tokenization_error_context (&state->tokenization),
                                           "Failed to initialize path container, given path is too long: %s", data);
         return;
     }
@@ -185,7 +225,7 @@ static inline void lexer_file_state_path_append_sequence (struct cushion_lexer_f
         if (state->path_buffer.size >= CUSHION_PATH_BUFFER_SIZE)
         {
             cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+                state->instance, tokenization_error_context (&state->tokenization),
                 "Failed to append directory separator to path container, resulting path is too long. Source path: %s",
                 state->path_buffer.data);
         }
@@ -199,7 +239,7 @@ static inline void lexer_file_state_path_append_sequence (struct cushion_lexer_f
     if (state->path_buffer.size + in_size + 1u >= CUSHION_PATH_BUFFER_SIZE)
     {
         cushion_instance_execution_error (
-            state->instance, &state->tokenization,
+            state->instance, tokenization_error_context (&state->tokenization),
             "Failed to append sequence to path container, resulting path is too long. Source path: %s",
             state->path_buffer.data);
     }
@@ -215,7 +255,7 @@ static inline void lexer_file_state_path_append_sequence (struct cushion_lexer_f
 struct cushion_lex_replacement_list_context_t
 {
     struct cushion_instance_t *instance;
-    struct cushion_tokenization_state_t *tokenization_state;
+    struct cushion_error_context_t error_context;
     enum cushion_macro_flags_t *flags_output;
 
     struct cushion_token_list_item_t *first;
@@ -263,9 +303,8 @@ static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_s
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
-        // TODO: We might need to rework error printing system to properly print errors inside __CUSHION_WRAPPED__.
         cushion_instance_execution_error (
-            context->instance, context->tokenization_state,
+            context->instance, context->error_context,
             "Encountered preprocessor directive while lexing replacement list. Shouldn't be "
             "possible at all, can be an internal error.");
         return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
@@ -277,7 +316,7 @@ static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_s
             if (context->first)
             {
                 cushion_instance_execution_error (
-                    context->instance, context->tokenization_state,
+                    context->instance, context->error_context,
                     "Encountered __CUSHION_PRESERVE__ while lexing replacement list and it is not first "
                     "replacement-list-significant token. When using __CUSHION_PRESERVE__ to avoid unwrapping "
                     "macro, it must always be the first thing in the replacement list.");
@@ -294,7 +333,7 @@ static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_s
             }
             else
             {
-                cushion_instance_execution_error (context->instance, context->tokenization_state,
+                cushion_instance_execution_error (context->instance, context->error_context,
                                                   "Encountered __CUSHION_WRAPPED__, but this feature is not "
                                                   "enabled in current execution context.");
                 return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
@@ -342,7 +381,6 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_tok
 {
     struct cushion_lex_replacement_list_context_t context = {
         .instance = instance,
-        .tokenization_state = tokenization_state,
         .flags_output = flags_output,
         .first = NULL,
         .last = NULL,
@@ -353,6 +391,8 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_tok
     while (context.lexing)
     {
         cushion_tokenization_next_token (instance, tokenization_state, &context.current_token);
+        context.error_context = tokenization_error_context (tokenization_state);
+
         if (cushion_instance_is_error_signaled (instance))
         {
             return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
@@ -385,7 +425,6 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_lex
 {
     struct cushion_lex_replacement_list_context_t context = {
         .instance = instance,
-        .tokenization_state = &lexer_state->tokenization,
         .flags_output = flags_output,
         .first = NULL,
         .last = NULL,
@@ -395,7 +434,9 @@ enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_from_lex
     *token_list_output = NULL;
     while (context.lexing)
     {
-        lexer_file_state_pop_token (lexer_state, &context.current_token);
+        struct lexer_pop_token_meta_t meta = lexer_file_state_pop_token (lexer_state, &context.current_token);
+        context.error_context = lex_error_context (lexer_state, &meta);
+
         if (cushion_instance_is_error_signaled (instance))
         {
             return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
@@ -672,6 +713,16 @@ struct macro_replacement_context_t
     struct macro_replacement_token_list_t sub_list;
 };
 
+static inline struct cushion_error_context_t macro_replacement_error_context (
+    struct cushion_lexer_file_state_t *state, struct macro_replacement_context_t *context)
+{
+    return (struct cushion_error_context_t) {
+        .file = state->tokenization.file_name,
+        .line = context->replacement_line,
+        .column = UINT_MAX,
+    };
+}
+
 static inline struct cushion_token_list_item_t *macro_replacement_token_list_append (
     struct cushion_lexer_file_state_t *state,
     struct macro_replacement_token_list_t *list,
@@ -721,7 +772,7 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
     {
         if ((context->macro->flags & CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS) == 0u)
         {
-            cushion_instance_execution_error (state->instance, &state->tokenization,
+            cushion_instance_execution_error (state->instance, macro_replacement_error_context (state, context),
                                               "Caught attempt to use __VA_ARGS__/__VA_OPT__ in non-variadic macro.");
             return;
         }
@@ -776,7 +827,7 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
             if (!context->current_token || context->current_token->token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
                 context->current_token->token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
             {
-                cushion_instance_execution_error (state->instance, &state->tokenization,
+                cushion_instance_execution_error (state->instance, macro_replacement_error_context (state, context),
                                                   "Expected \"(\" after __VA_OPT__ in replacement list.");
                 return;
             }
@@ -789,7 +840,7 @@ static inline void macro_replacement_context_process_identifier_into_sub_list (
             {
                 if (!context->current_token)
                 {
-                    cushion_instance_execution_error (state->instance, &state->tokenization,
+                    cushion_instance_execution_error (state->instance, macro_replacement_error_context (state, context),
                                                       "Got to the end of replacement list while lexing __VA_OPT__.");
                     break;
                 }
@@ -990,7 +1041,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 if (!context.current_token)
                 {
                     cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                        state->instance, macro_replacement_error_context (state, &context),
                         "Encountered \"#\" operator as a last token in macro replacement list.");
                     break;
                 }
@@ -998,7 +1049,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 if (context.current_token->token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
                 {
                     cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                        state->instance, macro_replacement_error_context (state, &context),
                         "Non-comment token following \"#\" operator is not an identifier.");
                     break;
                 }
@@ -1008,7 +1059,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                     if ((macro->flags & CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS) == 0u)
                     {
                         cushion_instance_execution_error (
-                            state->instance, &state->tokenization,
+                            state->instance, macro_replacement_error_context (state, &context),
                             "Caught attempt to stringize variadic arguments in non-variadic macro.");
                         break;
                     }
@@ -1099,7 +1150,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 if (!found_argument)
                 {
                     cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                        state->instance, macro_replacement_error_context (state, &context),
                         "Identifier token following \"#\" operator is neither argument name nor __VA_ARGS__.");
                     break;
                 }
@@ -1143,7 +1194,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 if (!context.result.last)
                 {
                     cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                        state->instance, macro_replacement_error_context (state, &context),
                         "Encountered \"##\" operator as a first token in macro replacement list.");
                     break;
                 }
@@ -1151,7 +1202,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 if (context.result.last->token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
                 {
                     cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                        state->instance, macro_replacement_error_context (state, &context),
                         "Encountered \"##\" operator after non-identifier token, which is "
                         "currently not supported by Cushion (but possible in standard).");
                     break;
@@ -1169,7 +1220,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                     if (!context.current_token)
                     {
                         cushion_instance_execution_error (
-                            state->instance, &state->tokenization,
+                            state->instance, macro_replacement_error_context (state, &context),
                             "Encountered \"##\" operator as a last token in macro replacement list.");
                         break;
                     }
@@ -1184,7 +1235,7 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                                                                                                                        \
     default:                                                                                                           \
         cushion_instance_execution_error (                                                                             \
-            state->instance, &state->tokenization,                                                                     \
+            state->instance, macro_replacement_error_context (state, &context),                                        \
             "Encountered \"##\" operator before token which is not an identifier and not an integer, "                 \
             "which is currently not supported by Cushion (but possible in standard).");                                \
         break;                                                                                                         \
@@ -1340,6 +1391,7 @@ enum lex_replace_identifier_if_macro_context_t
 static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
     struct cushion_lexer_file_state_t *state,
     struct cushion_token_t *identifier_token,
+    const struct lexer_pop_token_meta_t *identifier_token_meta,
     enum lex_replace_identifier_if_macro_context_t context);
 
 #define LEX_WHEN_ERROR(...)                                                                                            \
@@ -1468,7 +1520,7 @@ static inline void lex_preprocessor_preserved_tail (
     struct cushion_token_t current_token;
     while (lexer_file_state_should_continue (state))
     {
-        lexer_file_state_pop_token (state, &current_token);
+        struct lexer_pop_token_meta_t meta = lexer_file_state_pop_token (state, &current_token);
         LEX_WHEN_ERROR (break)
 
         switch (current_token.type)
@@ -1488,9 +1540,9 @@ static inline void lex_preprocessor_preserved_tail (
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Encountered preprocessor directive while lexing preserved preprocessor "
-                                              "directive. Shouldn't be possible at all, can be an internal error.");
+            cushion_instance_lexer_error (state, &meta,
+                                          "Encountered preprocessor directive while lexing preserved preprocessor "
+                                          "directive. Shouldn't be possible at all, can be an internal error.");
             return;
 
         case CUSHION_TOKEN_TYPE_IDENTIFIER:
@@ -1498,14 +1550,13 @@ static inline void lex_preprocessor_preserved_tail (
             switch (current_token.identifier_kind)
             {
             case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
-                cushion_instance_execution_error (state->instance, &state->tokenization,
-                                                  "Encountered cushion preserve keyword in unexpected context.");
+                cushion_instance_lexer_error (state, &meta,
+                                              "Encountered cushion preserve keyword in unexpected context.");
                 return;
 
             case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
-                    "Encountered cushion wrapped keyword in preserved preprocessor context.");
+                cushion_instance_lexer_error (state, &meta,
+                                              "Encountered cushion wrapped keyword in preserved preprocessor context.");
                 return;
 
             default:
@@ -1513,7 +1564,7 @@ static inline void lex_preprocessor_preserved_tail (
             }
 
             struct cushion_token_list_item_t *macro_tokens = lex_replace_identifier_if_macro (
-                state, &current_token, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
+                state, &current_token, &meta, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
 
             if (macro_tokens)
             {
@@ -1558,6 +1609,7 @@ static inline void lex_preprocessor_preserved_tail (
 static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
     struct cushion_lexer_file_state_t *state,
     struct cushion_token_t *identifier_token,
+    const struct lexer_pop_token_meta_t *identifier_token_meta,
     enum lex_replace_identifier_if_macro_context_t context)
 {
     struct cushion_macro_node_t *macro =
@@ -1579,8 +1631,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 #if defined(CUSHION_EXTENSIONS)
         if (macro->flags & CUSHION_MACRO_FLAG_WRAPPED)
         {
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, identifier_token_meta,
                 "Encountered macro that uses __CUSHION_WRAPPED__ inside evaluation context, which is not supported as "
                 "this kind of macros can never be unwrapped into valid integer constant expression.");
             return NULL;
@@ -1596,6 +1648,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
     {
         // Scan for the opening parenthesis.
         struct cushion_token_t current_token;
+        struct lexer_pop_token_meta_t current_token_meta;
 
         struct cushion_token_list_item_t *argument_tokens_first = NULL;
         struct cushion_token_list_item_t *argument_tokens_last = NULL;
@@ -1603,7 +1656,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 
         while (skipping_until_significant && !cushion_instance_is_error_signaled (state->instance))
         {
-            lexer_file_state_pop_token (state, &current_token);
+            current_token_meta = lexer_file_state_pop_token (state, &current_token);
             LEX_WHEN_ERROR (break)
 
             switch (current_token.type)
@@ -1618,8 +1671,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                     break;
 
                 case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION:
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                    cushion_instance_lexer_error (
+                        state, &current_token_meta,
                         "Reached new line while expecting \"(\" after function-line macro name "
                         "inside preprocessor directive evaluation.");
                     break;
@@ -1643,8 +1696,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
             current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
         {
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Expected \"(\" after function-line macro name.");
+            cushion_instance_lexer_error (state, &current_token_meta, "Expected \"(\" after function-line macro name.");
             return NULL;
         }
 
@@ -1655,7 +1707,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 
         while (parenthesis_counter > 0u && !cushion_instance_is_error_signaled (state->instance))
         {
-            lexer_file_state_pop_token (state, &current_token);
+            current_token_meta = lexer_file_state_pop_token (state, &current_token);
             LEX_WHEN_ERROR (break)
 
             switch (current_token.type)
@@ -1683,8 +1735,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                 {
                     if (parameterless_function_line)
                     {
-                        cushion_instance_execution_error (
-                            state->instance, &state->tokenization,
+                        cushion_instance_lexer_error (
+                            state, &current_token_meta,
                             "Encountered more parameters for function-line macro than expected.");
                         break;
                     }
@@ -1733,8 +1785,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                     break;
 
                 case LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION:
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                    cushion_instance_lexer_error (
+                        state, &current_token_meta,
                         "Reached new line while parsing arguments of function-line macro inside "
                         "preprocessor directive evaluation.");
                     break;
@@ -1748,9 +1800,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                 break;
 
             case CUSHION_TOKEN_TYPE_END_OF_FILE:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
-                    "Got to the end of file while parsing arguments of function-like macro.");
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Got to the end of file while parsing arguments of function-like macro.");
                 break;
 
             default:
@@ -1758,9 +1809,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
             {
                 if (!parameter && (macro->flags & CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS) == 0u)
                 {
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
-                        "Encountered more parameters for function-line macro than expected.");
+                    cushion_instance_lexer_error (state, &current_token_meta,
+                                                  "Encountered more parameters for function-line macro than expected.");
                     break;
                 }
 
@@ -1788,8 +1838,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         LEX_WHEN_ERROR (return NULL)
         if (parameter)
         {
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Encountered less parameters for function-line macro than expected.");
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Encountered less parameters for function-line macro than expected.");
             return NULL;
         }
     }
@@ -1807,13 +1857,13 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         assert (context != LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
 
         // Scan for opening brace.
-        struct lexer_pop_token_meta_t token_meta;
         struct cushion_token_t current_token;
+        struct lexer_pop_token_meta_t current_token_meta;
         unsigned int skipping_until_significant = 1u;
 
         while (skipping_until_significant && !cushion_instance_is_error_signaled (state->instance))
         {
-            token_meta = lexer_file_state_pop_token (state, &current_token);
+            current_token_meta = lexer_file_state_pop_token (state, &current_token);
             LEX_WHEN_ERROR (break)
 
             switch (current_token.type)
@@ -1835,8 +1885,8 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
             current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE)
         {
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Expected \"{\" after function-line macro with wrapped block arguments.");
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Expected \"{\" after function-line macro with wrapped block arguments.");
             return NULL;
         }
 
@@ -1845,10 +1895,10 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
             struct cushion_token_list_item_t *LIST_NAME##_new_token =                                                  \
                 cushion_save_token_to_memory (state->instance, TOKEN_TO_SAVE, CUSHION_ALLOCATION_CLASS_TRANSIENT);     \
                                                                                                                        \
-            LIST_NAME##_new_token->file = token_meta.file;                                                             \
-            LIST_NAME##_new_token->line = token_meta.line;                                                             \
+            LIST_NAME##_new_token->file = current_token_meta.file;                                                     \
+            LIST_NAME##_new_token->line = current_token_meta.line;                                                     \
                                                                                                                        \
-            if ((token_meta.flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT) == 0u)                              \
+            if ((current_token_meta.flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT) == 0u)                      \
             {                                                                                                          \
                 LIST_NAME##_new_token->flags |= CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK;                            \
             }                                                                                                          \
@@ -1871,7 +1921,7 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
 
         while (brace_counter > 0u && !cushion_instance_is_error_signaled (state->instance))
         {
-            token_meta = lexer_file_state_pop_token (state, &current_token);
+            current_token_meta = lexer_file_state_pop_token (state, &current_token);
             LEX_WHEN_ERROR (break)
 
             switch (current_token.type)
@@ -1900,9 +1950,9 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                 break;
 
             case CUSHION_TOKEN_TYPE_END_OF_FILE:
-                cushion_instance_execution_error (state->instance, &state->tokenization,
-                                                  "Got to the end of file while parsing wrapped block for "
-                                                  "function-like macro with wrapped block feature enabled.");
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Got to the end of file while parsing wrapped block for "
+                                              "function-like macro with wrapped block feature enabled.");
                 break;
 
             default:
@@ -1930,13 +1980,19 @@ enum lex_preprocessor_sub_expression_type_t
 static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *state,
                                             enum lex_preprocessor_sub_expression_type_t sub_expression_type);
 
-static inline void lex_skip_glue_and_comments (struct cushion_lexer_file_state_t *state,
-                                               struct cushion_token_t *current_token)
+static inline struct lexer_pop_token_meta_t lex_skip_glue_and_comments (struct cushion_lexer_file_state_t *state,
+                                                                        struct cushion_token_t *current_token)
 {
+    struct lexer_pop_token_meta_t meta = {
+        .file = state->last_marked_file,
+        .line = state->last_marked_line,
+        .flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE,
+    };
+
     while (lexer_file_state_should_continue (state))
     {
-        lexer_file_state_pop_token (state, current_token);
-        LEX_WHEN_ERROR (return)
+        meta = lexer_file_state_pop_token (state, current_token);
+        LEX_WHEN_ERROR (return meta)
 
         switch (current_token->type)
         {
@@ -1945,12 +2001,16 @@ static inline void lex_skip_glue_and_comments (struct cushion_lexer_file_state_t
             break;
 
         default:
-            return;
+            return meta;
         }
     }
+
+    return meta;
 }
 
-static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state, struct cushion_token_t *current_token)
+static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
+                                       struct cushion_token_t *current_token,
+                                       const struct lexer_pop_token_meta_t *meta)
 {
     switch (current_token->type)
     {
@@ -1965,8 +2025,7 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE:
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Encountered unsupported reserved identifier in defined check.");
+            cushion_instance_lexer_error (state, meta, "Encountered unsupported reserved identifier in defined check.");
             return 0u;
 
         default:
@@ -1976,8 +2035,7 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         break;
 
     default:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected identifier for defined check.");
+        cushion_instance_lexer_error (state, meta, "Expected identifier for defined check.");
         return 0u;
     }
 
@@ -1987,31 +2045,31 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
 static long long lex_preprocessor_evaluate_defined (struct cushion_lexer_file_state_t *state)
 {
     struct cushion_token_t current_token;
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return 0u)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected \"(\" after \"defined\" in preprocessor expression evaluation.");
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"(\" after \"defined\" in preprocessor expression evaluation.");
         return 0u;
     }
 
-    lex_skip_glue_and_comments (state, &current_token);
+    current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return 0u)
 
-    long long result = lex_do_defined_check (state, &current_token);
+    long long result = lex_do_defined_check (state, &current_token, &current_token_meta);
     LEX_WHEN_ERROR (return 0u)
 
-    lex_skip_glue_and_comments (state, &current_token);
+    current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return 0u)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
-        cushion_instance_execution_error (
-            state->instance, &state->tokenization,
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
             "Expected \")\" after macro name in \"defined\" in preprocessor expression evaluation.");
         return result;
     }
@@ -2025,7 +2083,7 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
     struct cushion_token_t current_token;
     while (lexer_file_state_should_continue (state))
     {
-        lexer_file_state_pop_token (state, &current_token);
+        struct lexer_pop_token_meta_t meta = lexer_file_state_pop_token (state, &current_token);
         LEX_WHEN_ERROR (break)
 
         switch (current_token.type)
@@ -2045,8 +2103,8 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &meta,
                 "Encountered preprocessor directive while evaluating preprocessor conditional "
                 "expression. Shouldn't be possible at all, can be an internal error.");
             return 0;
@@ -2065,8 +2123,8 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
             case CUSHION_IDENTIFIER_KIND_HAS_EMBED:
             case CUSHION_IDENTIFIER_KIND_HAS_C_ATTRIBUTE:
             {
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &meta,
                     "Encountered has_* check while evaluation preprocessor conditional expression. These checks are "
                     "not supported as Cushion is not guaranteed to have enough info to process them properly.");
                 return 0;
@@ -2076,12 +2134,12 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
             default:
             {
                 struct cushion_token_list_item_t *macro_tokens = lex_replace_identifier_if_macro (
-                    state, &current_token, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
+                    state, &current_token, &meta, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
 
                 if (!macro_tokens)
                 {
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                    cushion_instance_lexer_error (
+                        state, &meta,
                         "Encountered identifier which can not be unwrapped as macro while evaluation "
                         "preprocessor conditional expression. Identifiers can not be present in these "
                         "expressions as they must be integer constants.");
@@ -2120,8 +2178,8 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
                 return !lex_preprocessor_evaluate_argument (state, sub_expression_type);
 
             default:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &meta,
                     "Encountered unexpected punctuator while evaluating preprocessor conditional expression.");
                 return 0;
             }
@@ -2133,8 +2191,8 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
         case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
             if (current_token.unsigned_number_value > LLONG_MAX)
             {
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &meta,
                     "Encountered integer number which is higher than %lld (LLONG_MAX) while evaluating preprocessor "
                     "conditional expression, which is not supported by Cushion right now.",
                     (long long) LLONG_MAX);
@@ -2144,17 +2202,16 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
             return (long long) current_token.unsigned_number_value;
 
         case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
-                "Encountered non-integer number while evaluating preprocessor conditional "
-                "expression, which is not supported by specification.");
+            cushion_instance_lexer_error (state, &meta,
+                                          "Encountered non-integer number while evaluating preprocessor conditional "
+                                          "expression, which is not supported by specification.");
             return 0;
 
         case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
             if (current_token.symbolic_literal.encoding != CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY)
             {
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &meta,
                     "Encountered non-ordinary character literal while evaluating preprocessor "
                     "conditional expression, which is currently not supported by Cushion.");
                 return 0;
@@ -2162,8 +2219,8 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
 
             if (current_token.symbolic_literal.end - current_token.symbolic_literal.begin != 1u)
             {
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &meta,
                     "Encountered non-single-character character literal while evaluating preprocessor conditional "
                     "expression, which is currently not supported by Cushion.");
                 return 0;
@@ -2172,15 +2229,15 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
             return (long long) *current_token.symbolic_literal.begin;
 
         case CUSHION_TOKEN_TYPE_STRING_LITERAL:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &meta,
                 "Encountered string literal while evaluating preprocessor conditional expression, "
                 "which is not supported by specification.");
             return 0;
 
         case CUSHION_TOKEN_TYPE_NEW_LINE:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &meta,
                 "Encountered end of line while expecting next argument for preprocessor conditional expression.");
             return 0;
 
@@ -2190,14 +2247,14 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
             break;
 
         case CUSHION_TOKEN_TYPE_END_OF_FILE:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &meta,
                 "Encountered end of file while expecting next argument for preprocessor conditional expression.");
             return 0;
 
         case CUSHION_TOKEN_TYPE_OTHER:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &meta,
                 "Encountered unknown token expecting next argument for preprocessor conditional expression.");
             return 0;
         }
@@ -2442,6 +2499,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                                             enum lex_preprocessor_sub_expression_type_t sub_expression_type)
 {
     struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta;
     struct lex_evaluate_stack_item_t *evaluation_stack_top = NULL;
     struct lex_evaluate_stack_item_t *evaluation_stack_reuse = NULL;
 
@@ -2453,7 +2511,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
         // When ternary is fully processed, it is treated as single argument and operator
         // after it is requested right away.
     lex_next_operator:
-        lex_skip_glue_and_comments (state, &current_token);
+        current_token_meta = lex_skip_glue_and_comments (state, &current_token);
         LEX_WHEN_ERROR (return 0u)
 
         switch (current_token.type)
@@ -2468,8 +2526,8 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 {
                 case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_ROOT:
                 case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_TERNARY_POSITIVE:
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                    cushion_instance_lexer_error (
+                        state, &current_token_meta,
                         "Encountered unexpected \")\" in preprocessor expression evaluation.");
                     break;
 
@@ -2569,8 +2627,8 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_ROOT:
                 case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_PARENTHESIS:
                 case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_TERNARY_NEGATIVE:
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
+                    cushion_instance_lexer_error (
+                        state, &current_token_meta,
                         "Encountered unexpected \":\" in preprocessor expression evaluation.");
                     break;
 
@@ -2582,8 +2640,8 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 break;
 
             default:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
                     "Expected unexpected punctuator while expecting operator supported in preprocessor expression.");
                 break;
             }
@@ -2682,14 +2740,12 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 goto finish_evaluation;
 
             case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_PARENTHESIS:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
-                    "Expected \")\" but got new line in preprocessor expression evaluation.");
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Expected \")\" but got new line in preprocessor expression evaluation.");
 
             case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_TERNARY_POSITIVE:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
-                    "Expected \":\" but got new line in preprocessor expression evaluation.");
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Expected \":\" but got new line in preprocessor expression evaluation.");
                 break;
             }
 
@@ -2703,13 +2759,13 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 goto finish_evaluation;
 
             case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_PARENTHESIS:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
                     "Expected \")\" but got end of file in preprocessor expression evaluation.");
 
             case LEX_PREPROCESSOR_SUB_EXPRESSION_TYPE_TERNARY_POSITIVE:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
                     "Expected \":\" but got end of file in preprocessor expression evaluation.");
                 break;
             }
@@ -2750,15 +2806,15 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
         }
 
         default:
-            cushion_instance_execution_error (
-                state->instance, &state->tokenization,
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
                 "Expected operator token after argument in preprocessor expression evaluation.");
             break;
         }
     }
 
-    cushion_instance_execution_error (state->instance, &state->tokenization,
-                                      "Failed to properly evaluate preprocessor constant expression.");
+    cushion_instance_lexer_error (state, &current_token_meta,
+                                  "Failed to properly evaluate preprocessor constant expression.");
     return 0;
 }
 
@@ -2876,7 +2932,7 @@ static void lex_preprocessor_if (struct cushion_lexer_file_state_t *state,
 static void lex_preprocessor_expect_new_line (struct cushion_lexer_file_state_t *state)
 {
     struct cushion_token_t current_token;
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     switch (current_token.type)
@@ -2885,8 +2941,7 @@ static void lex_preprocessor_expect_new_line (struct cushion_lexer_file_state_t 
         break;
 
     default:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected new line after preprocessor expression.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected new line after preprocessor expression.");
         break;
     }
 }
@@ -2902,10 +2957,10 @@ static void lex_preprocessor_ifdef (struct cushion_lexer_file_state_t *state, un
     unsigned int start_line = state->tokenization.cursor_line;
     struct cushion_token_t current_token;
 
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    long long check_result = lex_do_defined_check (state, &current_token);
+    long long check_result = lex_do_defined_check (state, &current_token, &current_token_meta);
     LEX_WHEN_ERROR (return)
 
     lex_preprocessor_expect_new_line (state);
@@ -2965,20 +3020,21 @@ static unsigned int lex_preprocessor_else_is_transitively_preserved (struct cush
 #define LEX_PREPROCESSOR_ELSE_VALIDATE                                                                                 \
     if (!state->conditional_inclusion_node)                                                                            \
     {                                                                                                                  \
-        cushion_instance_execution_error (state->instance, &state->tokenization,                                       \
-                                          "Found else family preprocessor without if family preprocessor before it."); \
+        cushion_instance_lexer_error (state, preprocessor_token_meta,                                                  \
+                                      "Found else family preprocessor without if family preprocessor before it.");     \
         return;                                                                                                        \
     }                                                                                                                  \
                                                                                                                        \
     if (state->conditional_inclusion_node->flags & CONDITIONAL_INCLUSION_FLAGS_HAD_PLAIN_ELSE)                         \
     {                                                                                                                  \
-        cushion_instance_execution_error (state->instance, &state->tokenization,                                       \
-                                          "Found else family preprocessor in chain after unconditional #else.");       \
+        cushion_instance_lexer_error (state, preprocessor_token_meta,                                                  \
+                                      "Found else family preprocessor in chain after unconditional #else.");           \
         return;                                                                                                        \
     }
 
 static void lex_preprocessor_elif (struct cushion_lexer_file_state_t *state,
-                                   const struct cushion_token_t *preprocessor_token)
+                                   const struct cushion_token_t *preprocessor_token,
+                                   const struct lexer_pop_token_meta_t *preprocessor_token_meta)
 {
     LEX_PREPROCESSOR_ELSE_VALIDATE
     if (lex_preprocessor_else_is_transitively_excluded_conditional (state) ||
@@ -3002,6 +3058,7 @@ static void lex_preprocessor_elif (struct cushion_lexer_file_state_t *state,
 
 static void lex_preprocessor_elifdef (struct cushion_lexer_file_state_t *state,
                                       const struct cushion_token_t *preprocessor_token,
+                                      const struct lexer_pop_token_meta_t *preprocessor_token_meta,
                                       unsigned int reverse)
 {
     LEX_PREPROCESSOR_ELSE_VALIDATE
@@ -3015,10 +3072,10 @@ static void lex_preprocessor_elifdef (struct cushion_lexer_file_state_t *state,
     const unsigned int start_line = state->tokenization.cursor_line;
     struct cushion_token_t current_token;
 
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    long long check_result = lex_do_defined_check (state, &current_token);
+    long long check_result = lex_do_defined_check (state, &current_token, &current_token_meta);
     LEX_WHEN_ERROR (return)
 
     lex_preprocessor_expect_new_line (state);
@@ -3039,7 +3096,8 @@ static void lex_preprocessor_elifdef (struct cushion_lexer_file_state_t *state,
 }
 
 static void lex_preprocessor_else (struct cushion_lexer_file_state_t *state,
-                                   const struct cushion_token_t *preprocessor_token)
+                                   const struct cushion_token_t *preprocessor_token,
+                                   const struct lexer_pop_token_meta_t *preprocessor_token_meta)
 {
     LEX_PREPROCESSOR_ELSE_VALIDATE
     if (lex_preprocessor_else_is_transitively_excluded_conditional (state) ||
@@ -3062,12 +3120,13 @@ static void lex_preprocessor_else (struct cushion_lexer_file_state_t *state,
 }
 
 static void lex_preprocessor_endif (struct cushion_lexer_file_state_t *state,
-                                    const struct cushion_token_t *preprocessor_token)
+                                    const struct cushion_token_t *preprocessor_token,
+                                    const struct lexer_pop_token_meta_t *preprocessor_token_meta)
 {
     if (!state->conditional_inclusion_node)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Found #endif without if-else family preprocessor before it.");
+        cushion_instance_lexer_error (state, preprocessor_token_meta,
+                                      "Found #endif without if-else family preprocessor before it.");
         return;
     }
 
@@ -3088,6 +3147,7 @@ static void lex_preprocessor_endif (struct cushion_lexer_file_state_t *state,
 
 static unsigned int lex_preprocessor_try_include (struct cushion_lexer_file_state_t *state,
                                                   const struct cushion_token_t *header_token,
+                                                  const struct lexer_pop_token_meta_t *header_token_meta,
                                                   struct cushion_include_node_t *include_node)
 {
     if (include_node)
@@ -3113,8 +3173,8 @@ static unsigned int lex_preprocessor_try_include (struct cushion_lexer_file_stat
         case INCLUDE_TYPE_FULL:
             if (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY)
             {
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, header_token_meta,
                     "Include \"%s\" points to full include directory, but it is done from file which is under scan "
                     "only directory. It is considered an error as it makes handling includes much more complex. "
                     "Therefore, including files from full path from files from scan only path is forbidden.",
@@ -3155,7 +3215,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
     const unsigned int start_line = state->tokenization.cursor_line;
     struct cushion_token_t current_token;
 
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     switch (current_token.type)
@@ -3165,8 +3225,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
         break;
 
     default:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected header path after #include.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected header path after #include.");
         return;
     }
 
@@ -3202,7 +3261,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
             }
         }
 
-        if (lex_preprocessor_try_include (state, &current_token, NULL))
+        if (lex_preprocessor_try_include (state, &current_token, &current_token_meta, NULL))
         {
             include_result = LEX_INCLUDE_RESULT_FULL;
         }
@@ -3211,7 +3270,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
     struct cushion_include_node_t *node = state->instance->includes_first;
     while (node && include_result == LEX_INCLUDE_RESULT_NOT_FOUND)
     {
-        if (lex_preprocessor_try_include (state, &current_token, node))
+        if (lex_preprocessor_try_include (state, &current_token, &current_token_meta, node))
         {
             include_result = node->type == INCLUDE_TYPE_FULL ? LEX_INCLUDE_RESULT_FULL : LEX_INCLUDE_RESULT_SCAN;
             break;
@@ -3245,12 +3304,13 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
 {
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t first_token_meta = current_token_meta;
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization, "Expected identifier after #define.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected identifier after #define.");
         return;
     }
 
@@ -3260,8 +3320,8 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
         break;
 
     default:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Reserved word is used as macro name, which is not supported by Cushion.");
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Reserved word is used as macro name, which is not supported by Cushion.");
         return;
     }
 
@@ -3276,7 +3336,7 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
     node->replacement_list_first = NULL;
     node->parameters_first = NULL;
 
-    lexer_file_state_pop_token (state, &current_token);
+    current_token_meta = lexer_file_state_pop_token (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     switch (current_token.type)
@@ -3289,7 +3349,7 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
 
         while (lexing_arguments)
         {
-            lex_skip_glue_and_comments (state, &current_token);
+            current_token_meta = lex_skip_glue_and_comments (state, &current_token);
             LEX_WHEN_ERROR (return)
 
             switch (current_token.type)
@@ -3337,15 +3397,15 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
             current_token.punctuator_kind == CUSHION_PUNCTUATOR_KIND_TRIPLE_DOT)
         {
             node->flags |= CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS;
-            lex_skip_glue_and_comments (state, &current_token);
+            current_token_meta = lex_skip_glue_and_comments (state, &current_token);
             LEX_WHEN_ERROR (return)
         }
 
         if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
             current_token.punctuator_kind == CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
         {
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Expected \")\" or \",\" while reading macro parameter name list.");
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Expected \")\" or \",\" while reading macro parameter name list.");
             return;
         }
 
@@ -3365,9 +3425,8 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
         break;
 
     default:
-        cushion_instance_execution_error (
-            state->instance, &state->tokenization,
-            "Expected whitespaces, comments, \"(\", line end or file end after macro name.");
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected whitespaces, comments, \"(\", line end or file end after macro name.");
         return;
     }
 
@@ -3389,7 +3448,7 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
 
 register_macro:
     // Register generated macro.
-    cushion_instance_macro_add (state->instance, node, &state->tokenization);
+    cushion_instance_macro_add (state->instance, node, lex_error_context (state, &first_token_meta));
     lex_update_tokenization_flags (state);
 }
 
@@ -3398,17 +3457,18 @@ static void lex_preprocessor_undef (struct cushion_lexer_file_state_t *state)
     const unsigned int start_line = state->tokenization.cursor_line;
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization, "Expected identifier after #undef.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected identifier after #undef.");
         return;
     }
 
     struct cushion_macro_node_t *node =
         cushion_instance_macro_search (state->instance, current_token.begin, current_token.end);
+
     if (!node || (node->flags & CUSHION_MACRO_FLAG_PRESERVED))
     {
         // Preserve #undef as macro is either unknown or explicitly preserved.
@@ -3434,13 +3494,13 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
 {
     lex_do_not_skip_regular (state);
     struct cushion_token_t current_token;
-    lex_skip_glue_and_comments (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_NUMBER_INTEGER)
     {
-        cushion_instance_execution_error (
-            state->instance, &state->tokenization,
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
             "Expected integer line number after #line. Standard allows arbitrary preprocessor-evaluable expressions "
             "for line number calculations, but it is not yet supported in Cushion as it is a rare case.");
         return;
@@ -3449,13 +3509,13 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
     const unsigned long long line_number = current_token.unsigned_number_value;
     if (line_number > UINT_MAX)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Line number %llu is too big and is not supported.", line_number);
+        cushion_instance_lexer_error (state, &current_token_meta, "Line number %llu is too big and is not supported.",
+                                      line_number);
         return;
     }
 
     char *new_file_name = NULL;
-    lex_skip_glue_and_comments (state, &current_token);
+    current_token_meta = lex_skip_glue_and_comments (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     switch (current_token.type)
@@ -3476,9 +3536,8 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
             {
                 if (cursor + 1u >= current_token.symbolic_literal.end)
                 {
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
-                        "Encountered \"\\\" as the last symbol of string literal in #line.");
+                    cushion_instance_lexer_error (state, &current_token_meta,
+                                                  "Encountered \"\\\" as the last symbol of string literal in #line.");
                     return;
                 }
 
@@ -3491,10 +3550,9 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
                     break;
 
                 default:
-                    cushion_instance_execution_error (
-                        state->instance, &state->tokenization,
-                        "Encountered unsupported escape \"\\%c\" in #line file name, only "
-                        "\"\\\\\" and \"\\\"\" are supported in that context.");
+                    cushion_instance_lexer_error (state, &current_token_meta,
+                                                  "Encountered unsupported escape \"\\%c\" in #line file name, only "
+                                                  "\"\\\\\" and \"\\\"\" are supported in that context.");
                     return;
                 }
             }
@@ -3505,7 +3563,7 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
         }
 
         *file_name_output = '\0';
-        lex_skip_glue_and_comments (state, &current_token);
+        current_token_meta = lex_skip_glue_and_comments (state, &current_token);
         LEX_WHEN_ERROR (return)
 
         switch (current_token.type)
@@ -3516,8 +3574,8 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
             break;
 
         default:
-            cushion_instance_execution_error (state->instance, &state->tokenization,
-                                              "Expected new line or file end after file name in #line directive.");
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Expected new line or file end after file name in #line directive.");
             return;
         }
 
@@ -3530,8 +3588,8 @@ static void lex_preprocessor_line (struct cushion_lexer_file_state_t *state)
         break;
 
     default:
-        cushion_instance_execution_error (
-            state->instance, &state->tokenization,
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
             "Expected file name literal or new line after line number in #line. Standard allows "
             "arbitrary preprocessor-evaluable expressions for file name determination, but it is "
             "not yet supported in Cushion as it is a rare case.");
@@ -3608,13 +3666,19 @@ static void lex_preprocessor_pragma (struct cushion_lexer_file_state_t *state)
     lex_update_tokenization_flags (state);
 }
 
-static inline void lex_skip_glue_comments_new_line (struct cushion_lexer_file_state_t *state,
-                                                    struct cushion_token_t *current_token)
+static inline struct lexer_pop_token_meta_t lex_skip_glue_comments_new_line (struct cushion_lexer_file_state_t *state,
+                                                                             struct cushion_token_t *current_token)
 {
+    struct lexer_pop_token_meta_t meta = {
+        .file = state->last_marked_file,
+        .line = state->last_marked_line,
+        .flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE,
+    };
+
     while (lexer_file_state_should_continue (state))
     {
-        lexer_file_state_pop_token (state, current_token);
-        LEX_WHEN_ERROR (return)
+        meta = lexer_file_state_pop_token (state, current_token);
+        LEX_WHEN_ERROR (return meta)
 
         switch (current_token->type)
         {
@@ -3624,39 +3688,40 @@ static inline void lex_skip_glue_comments_new_line (struct cushion_lexer_file_st
             break;
 
         default:
-            return;
+            return meta;
         }
     }
+
+    return meta;
 }
 
 static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
 {
     const unsigned int start_line = state->last_marked_line;
     struct cushion_token_t current_token;
-    lex_skip_glue_comments_new_line (state, &current_token);
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization, "Expected \"(\" after _Pragma.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected \"(\" after _Pragma.");
         return;
     }
 
-    lex_skip_glue_comments_new_line (state, &current_token);
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_STRING_LITERAL)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected string literal as argument of _Pragma.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected string literal as argument of _Pragma.");
         return;
     }
 
     if (current_token.symbolic_literal.encoding != CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Only ordinary encoding supported for _Pragma argument.");
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Only ordinary encoding supported for _Pragma argument.");
         return;
     }
 
@@ -3676,8 +3741,8 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
         {
             if (cursor + 1u >= current_token.symbolic_literal.end)
             {
-                cushion_instance_execution_error (state->instance, &state->tokenization,
-                                                  "Encountered \"\\\" as the last symbol of _Pragma argument literal.");
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Encountered \"\\\" as the last symbol of _Pragma argument literal.");
                 return;
             }
 
@@ -3696,8 +3761,8 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
                 break;
 
             default:
-                cushion_instance_execution_error (
-                    state->instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
                     "Encountered unsupported escape \"\\%c\" in _Pragma argument literal, only "
                     "\"\\\\\" and \"\\\"\" are supported in that context.");
                 return;
@@ -3714,19 +3779,20 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
 
     cushion_instance_output_null_terminated (state->instance, "\n");
     lex_on_line_mark_manually_updated (state, state->tokenization.file_name, start_line + 1u);
-    lex_skip_glue_comments_new_line (state, &current_token);
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
     if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Expected \")\" after _Pragma argument.");
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected \")\" after _Pragma argument.");
         return;
     }
 }
 
-static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struct cushion_token_t *current_token)
+static void lex_code_identifier (struct cushion_lexer_file_state_t *state,
+                                 struct cushion_token_t *current_token,
+                                 const struct lexer_pop_token_meta_t *current_token_meta)
 {
     // When we're doing scan only pass, we should not lex identifiers like this at all.
     assert (!(state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY));
@@ -3810,13 +3876,13 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struc
     }
 
     case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Encountered cushion preserve keyword in unexpected context.");
+        cushion_instance_lexer_error (state, current_token_meta,
+                                      "Encountered cushion preserve keyword in unexpected context.");
         return;
 
     case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
-        cushion_instance_execution_error (state->instance, &state->tokenization,
-                                          "Encountered cushion wrapped keyword in unexpected context.");
+        cushion_instance_lexer_error (state, current_token_meta,
+                                      "Encountered cushion wrapped keyword in unexpected context.");
         return;
 
     case CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA:
@@ -3827,8 +3893,8 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state, struc
         break;
     }
 
-    struct cushion_token_list_item_t *macro_tokens =
-        lex_replace_identifier_if_macro (state, current_token, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE);
+    struct cushion_token_list_item_t *macro_tokens = lex_replace_identifier_if_macro (
+        state, current_token, current_token_meta, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE);
 
     if (macro_tokens)
     {
@@ -3913,7 +3979,12 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     // We need to always convert file path to absolute in order to have proper line directives everywhere.
     if (cushion_convert_path_to_absolute (path, state->file_name) != CUSHION_INTERNAL_RESULT_OK)
     {
-        cushion_instance_execution_error (state->instance, &state->tokenization,
+        cushion_instance_execution_error (state->instance,
+                                          (struct cushion_error_context_t) {
+                                              .file = path,
+                                              .line = 1u,
+                                              .column = UINT_MAX,
+                                          },
                                           "Unable to convert path \"%s\" to absolute path.", path);
 
         cushion_allocator_reset_transient (&instance->allocator, allocation_marker);
@@ -4002,23 +4073,23 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
-            lex_preprocessor_elif (state, &current_token);
+            lex_preprocessor_elif (state, &current_token, &current_token_meta);
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
-            lex_preprocessor_elifdef (state, &current_token, 0u);
+            lex_preprocessor_elifdef (state, &current_token, &current_token_meta, 0u);
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
-            lex_preprocessor_elifdef (state, &current_token, 1u);
+            lex_preprocessor_elifdef (state, &current_token, &current_token_meta, 1u);
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
-            lex_preprocessor_else (state, &current_token);
+            lex_preprocessor_else (state, &current_token, &current_token_meta);
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
-            lex_preprocessor_endif (state, &current_token);
+            lex_preprocessor_endif (state, &current_token, &current_token_meta);
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
@@ -4032,8 +4103,8 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
-            cushion_instance_execution_error (instance, &state->tokenization,
-                                              "Unexpected header path token (no prior #include).");
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Unexpected header path token (no prior #include).");
             break;
 
         case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
@@ -4073,7 +4144,7 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
             break;
 
         case CUSHION_TOKEN_TYPE_IDENTIFIER:
-            lex_code_identifier (state, &current_token);
+            lex_code_identifier (state, &current_token, &current_token_meta);
             break;
 
         case CUSHION_TOKEN_TYPE_PUNCTUATOR:
@@ -4094,8 +4165,8 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
         case CUSHION_TOKEN_TYPE_END_OF_FILE:
             if (state->conditional_inclusion_node)
             {
-                cushion_instance_execution_error (
-                    instance, &state->tokenization,
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
                     "Encountered end of file, but conditional inclusion started line %u at is not closed.",
                     state->conditional_inclusion_node->line);
             }
