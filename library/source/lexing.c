@@ -1372,7 +1372,7 @@ static unsigned int lex_update_line_mark (struct cushion_lexer_file_state_t *sta
         else
         {
             cushion_instance_output_null_terminated (state->instance, "\n");
-            cushion_instance_output_line_marker (state->instance, required_line, required_file);
+            cushion_instance_output_line_marker (state->instance, required_file, required_line);
         }
 
         lex_on_line_mark_manually_updated (state, required_file, required_line);
@@ -3292,8 +3292,8 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
 
     if (include_result == LEX_INCLUDE_RESULT_FULL && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
-        cushion_instance_output_line_marker (state->instance, state->tokenization.cursor_line,
-                                             state->tokenization.file_name);
+        cushion_instance_output_line_marker (state->instance, state->tokenization.file_name,
+                                             state->tokenization.cursor_line);
         lex_on_line_mark_manually_updated (state, state->tokenization.file_name, state->tokenization.cursor_line);
     }
 
@@ -3994,7 +3994,7 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     cushion_instance_output_depfile_entry (state->instance, state->file_name);
     if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
-        cushion_instance_output_line_marker (instance, 1u, state->file_name);
+        cushion_instance_output_line_marker (instance, state->file_name, 1u);
     }
 
     cushion_tokenization_state_init_for_file (&state->tokenization, state->file_name, input_file,

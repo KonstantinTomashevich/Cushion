@@ -158,6 +158,14 @@ struct cushion_instance_t
     struct cushion_include_node_t *includes_first;
     struct cushion_include_node_t *includes_last;
 
+#if defined(CUSHION_EXTENSIONS)
+    struct cushion_deferred_output_node_t *deferred_output_first;
+    struct cushion_deferred_output_node_t *deferred_output_last;
+    struct cushion_deferred_output_node_t *deferred_output_selected;
+
+    struct cushion_output_buffer_node_t *free_buffers_first;
+#endif
+
     struct cushion_macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
     struct cushion_pragma_once_file_node_t *pragma_once_buckets[CUSHION_PRAGMA_ONCE_BUCKETS];
     struct cushion_depfile_dependency_node_t *cmake_depfile_buckets[CUSHION_DEPFILE_BUCKETS];
@@ -249,6 +257,33 @@ struct cushion_depfile_dependency_node_t
     const char *path;
 };
 
+#if defined(CUSHION_EXTENSIONS)
+enum cushion_deferred_output_node_flags_t
+{
+    CUSHION_DEFERRED_OUTPUT_NODE_FLAG_NONE = 0u,
+    CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED = 1u << 0u,
+};
+
+struct cushion_deferred_output_node_t
+{
+    struct cushion_deferred_output_node_t *next;
+    enum cushion_deferred_output_node_flags_t flags;
+
+    const char *source_file;
+    unsigned int source_line;
+
+    struct cushion_output_buffer_node_t *content_first;
+    struct cushion_output_buffer_node_t *content_last;
+};
+
+struct cushion_output_buffer_node_t
+{
+    struct cushion_output_buffer_node_t *next;
+    char *end;
+    char data[CUSHION_OUTPUT_BUFFER_NODE_SIZE];
+};
+#endif
+
 void cushion_instance_clean_configuration (struct cushion_instance_t *instance);
 
 static inline char *cushion_instance_copy_char_sequence_inside (struct cushion_instance_t *instance,
@@ -331,9 +366,51 @@ void cushion_instance_macro_remove (struct cushion_instance_t *instance, const c
 
 void cushion_instance_output_sequence (struct cushion_instance_t *instance, const char *begin, const char *end);
 
-void cushion_instance_output_null_terminated (struct cushion_instance_t *instance, const char *string);
+static inline void cushion_instance_output_null_terminated (struct cushion_instance_t *instance, const char *string)
+{
+    return cushion_instance_output_sequence (instance, string, string + strlen (string));
+}
 
-void cushion_instance_output_line_marker (struct cushion_instance_t *instance, unsigned int line, const char *path);
+static inline void cushion_instance_output_formatted (struct cushion_instance_t *instance, const char *format, ...)
+{
+    va_list variadic_arguments;
+    va_start (variadic_arguments, format);
+
+    char buffer[CUSHION_OUTPUT_FORMATTED_BUFFER_SIZE];
+    int printed = vsnprintf (buffer, CUSHION_OUTPUT_FORMATTED_BUFFER_SIZE, format, variadic_arguments);
+
+    va_end (variadic_arguments);
+    cushion_instance_output_sequence (instance, buffer, buffer + printed);
+}
+
+static inline void cushion_instance_output_line_marker (struct cushion_instance_t *instance,
+                                                        const char *file,
+                                                        unsigned int line)
+{
+    cushion_instance_output_formatted (instance, "#line %u \"%s\"\n", line, file);
+}
+
+#if defined(CUSHION_EXTENSIONS)
+/// \brief Creates deferred sink that blocks output until it is finished.
+/// \details Sink is not selected for output automatically, output functions will do output to buffer that will be
+///          written after content of created sink. To use output functions for writing into deferred sink, select it
+///          using cushion_output_select_sink. Source file is allowed to be any string, it is safely reallocated inside.
+struct cushion_deferred_output_node_t *cushion_output_add_deferred_sink (struct cushion_instance_t *instance,
+                                                                         const char *source_file,
+                                                                         unsigned int source_line);
+
+/// \brief Select deferred think to output to it or pass NULL to disable deferred sink selection.
+/// \invariant Only unfinished (with CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED flag) nodes are allowed here.
+void cushion_output_select_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink);
+
+/// \brief Finishing sink makes sure that it cannot be selected anymore and if it was blocking output
+///        output may be flushed now.
+void cushion_output_finish_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink);
+
+/// \brief Inform output system that we're trying to finalize all the output.
+/// \details Needed to properly raise errors for unfinished deferred sinks.
+void cushion_output_finalize (struct cushion_instance_t *instance);
+#endif
 
 /// \brief Output function to writing depfile target.
 /// \details Should only be called from api.c and needed because

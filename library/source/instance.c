@@ -156,8 +156,17 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
     instance->state_flags = 0u;
     instance->features = 0u;
     instance->options = 0u;
+
     instance->includes_first = NULL;
     instance->includes_last = NULL;
+
+#if defined(CUSHION_EXTENSIONS)
+    instance->deferred_output_first = NULL;
+    instance->deferred_output_last = NULL;
+    instance->deferred_output_selected = NULL;
+
+    instance->free_buffers_first = NULL;
+#endif
 
     instance->inputs_first = NULL;
     instance->inputs_last = NULL;
@@ -298,13 +307,73 @@ void cushion_instance_macro_remove (struct cushion_instance_t *instance, const c
     }
 }
 
+#if defined(CUSHION_EXTENSIONS)
+struct cushion_output_buffer_node_t *new_cushion_output_buffer_node (struct cushion_instance_t *instance)
+{
+    struct cushion_output_buffer_node_t *allocated;
+    if (instance->free_buffers_first)
+    {
+        allocated = instance->free_buffers_first;
+        instance->free_buffers_first = allocated->next;
+    }
+    else
+    {
+        allocated = cushion_allocator_allocate (&instance->allocator, sizeof (struct cushion_output_buffer_node_t),
+                                                _Alignof (struct cushion_output_buffer_node_t),
+                                                CUSHION_ALLOCATION_CLASS_PERSISTENT);
+    }
+
+    allocated->next = NULL;
+    allocated->end = allocated->data;
+    return allocated;
+}
+#endif
+
 void cushion_instance_output_sequence (struct cushion_instance_t *instance, const char *begin, const char *end)
 {
     if (instance->output)
     {
-        // TODO: Proper deferred output needed for the future when statement accumulators are added.
-
         size_t length = end - begin;
+
+#if defined(CUSHION_EXTENSIONS)
+        struct cushion_deferred_output_node_t *deferred_node =
+            instance->deferred_output_selected ? instance->deferred_output_selected : instance->deferred_output_last;
+
+        if (deferred_node)
+        {
+            if (!deferred_node->content_last)
+            {
+                deferred_node->content_last = new_cushion_output_buffer_node (instance);
+                deferred_node->content_first = deferred_node->content_last;
+            }
+
+            while (length > 0u)
+            {
+                const size_t used_in_buffer = deferred_node->content_last->end - deferred_node->content_last->data;
+                const size_t left_in_buffer = CUSHION_OUTPUT_BUFFER_NODE_SIZE - used_in_buffer;
+
+                if (left_in_buffer > length)
+                {
+                    memcpy (deferred_node->content_last->end, begin, length);
+                    deferred_node->content_last->end += length;
+                    break;
+                }
+                else
+                {
+                    memcpy (deferred_node->content_last->end, begin, left_in_buffer);
+                    deferred_node->content_last->end += left_in_buffer;
+                    begin += left_in_buffer;
+                    length -= left_in_buffer;
+
+                    deferred_node->content_last->next = new_cushion_output_buffer_node (instance);
+                    deferred_node->content_last = deferred_node->content_last->next;
+                }
+            }
+
+            return;
+        }
+#endif
+
         if (fwrite (begin, 1u, length, instance->output) != length)
         {
             fprintf (stderr, "Failed to output preprocessed code.\n");
@@ -313,24 +382,154 @@ void cushion_instance_output_sequence (struct cushion_instance_t *instance, cons
     }
 }
 
-void cushion_instance_output_null_terminated (struct cushion_instance_t *instance, const char *string)
+#if defined(CUSHION_EXTENSIONS)
+struct cushion_deferred_output_node_t *cushion_output_add_deferred_sink (struct cushion_instance_t *instance,
+                                                                         const char *source_file,
+                                                                         unsigned int source_line)
 {
-    return cushion_instance_output_sequence (instance, string, string + strlen (string));
+    const char *source_file_safe =
+        cushion_instance_copy_null_terminated_inside (instance, source_file, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    // Nodes are not reused as they're relatively small. Only buffers are reused as they're relatively big.
+
+    struct cushion_deferred_output_node_t *deferred_node = cushion_allocator_allocate (
+        &instance->allocator, sizeof (struct cushion_deferred_output_node_t),
+        _Alignof (struct cushion_deferred_output_node_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    deferred_node->flags = CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED;
+    deferred_node->source_file = source_file_safe;
+    deferred_node->source_line = source_line;
+    deferred_node->content_first = NULL;
+    deferred_node->content_last = NULL;
+
+    struct cushion_deferred_output_node_t *follow_up_node = cushion_allocator_allocate (
+        &instance->allocator, sizeof (struct cushion_deferred_output_node_t),
+        _Alignof (struct cushion_deferred_output_node_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    follow_up_node->flags = CUSHION_DEFERRED_OUTPUT_NODE_FLAG_NONE;
+    follow_up_node->source_file = source_file_safe;
+    follow_up_node->source_line = source_line;
+    follow_up_node->content_first = NULL;
+    follow_up_node->content_last = NULL;
+
+    deferred_node->next = follow_up_node;
+    follow_up_node->next = NULL;
+
+    if (instance->deferred_output_last)
+    {
+        instance->deferred_output_last->next = deferred_node;
+    }
+    else
+    {
+        instance->deferred_output_first = deferred_node;
+    }
+
+    instance->deferred_output_last = follow_up_node;
+    return deferred_node;
 }
 
-void cushion_instance_output_line_marker (struct cushion_instance_t *instance, unsigned int line, const char *path)
+void cushion_output_select_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink)
 {
-    if (instance->output)
-    {
-        // TODO: Proper deferred output needed for the future when statement accumulators are added.
+    assert (sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED);
+    instance->deferred_output_selected = sink;
+}
 
-        if (fprintf (instance->output, "#line %u \"%s\"\n", line, path) == 0)
+static void flush_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink)
+{
+    // We do not add line directives before and after sinks as we expect their content to handle it properly.
+    struct cushion_output_buffer_node_t *buffer = sink->content_first;
+
+    while (buffer)
+    {
+        if (buffer->data != buffer->end)
         {
-            fprintf (stderr, "Failed to output preprocessed code.\n");
-            cushion_instance_signal_error (instance);
+            const size_t length = buffer->end - buffer->data;
+            if (fwrite (buffer->data, 1u, length, instance->output) != length)
+            {
+                fprintf (stderr, "Failed to output preprocessed code.\n");
+                cushion_instance_signal_error (instance);
+            }
+        }
+
+        buffer = buffer->next;
+    }
+
+    // Return buffers to free list.
+    if (sink->content_last)
+    {
+        sink->content_last->next = instance->free_buffers_first;
+        instance->free_buffers_first = sink->content_first;
+    }
+}
+
+void cushion_output_finish_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink)
+{
+    assert ((sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED) == 0u);
+    sink->flags &= ~CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED;
+
+    if (sink == instance->deferred_output_first)
+    {
+        // It was a blocking sink, try flush everything now.
+        struct cushion_deferred_output_node_t *current = instance->deferred_output_first;
+
+        while (current)
+        {
+            if (current->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED)
+            {
+                // Flushed everything that can be flushed now.
+                break;
+            }
+
+            flush_sink (instance, current);
+            current = current->next;
+        }
+
+        instance->deferred_output_first = current;
+    }
+}
+
+void cushion_output_finalize (struct cushion_instance_t *instance)
+{
+    if (instance->deferred_output_first)
+    {
+        cushion_instance_signal_error (instance);
+        fprintf (stderr,
+                 "Failed to properly write output: some sinks are still unfinished. See errors above for reasons (and "
+                 "if there is no reasons, then it is an internal error).\n");
+        struct cushion_deferred_output_node_t *current = instance->deferred_output_first;
+
+        while (current)
+        {
+            if (current->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED)
+            {
+                fprintf (stderr, "    Sink created at \"%s\" line %u is not finished.\n", current->source_file,
+                         (unsigned int) current->source_line);
+
+                // Add information to the output file too.
+                cushion_instance_output_formatted (
+                    instance, "\n#line %u \"%s\"\n/* Sink that was created here is not finished properly. */\n",
+                    (unsigned int) current->source_line, current->source_file);
+
+                // Restore line number for following sinks.
+                if (current->next)
+                {
+                    cushion_instance_output_formatted (instance, "#line %u \"%s\"\n",
+                                                       (unsigned int) current->next->source_line,
+                                                       current->next->source_file);
+                }
+
+                // No need for returning buffers to free list, as we're finalizing everything either way.
+            }
+            else
+            {
+                flush_sink (instance, current);
+            }
+
+            current = current->next;
         }
     }
 }
+#endif
 
 static void output_depfile_path_name (struct cushion_instance_t *instance, const char *absolute_path_name)
 {

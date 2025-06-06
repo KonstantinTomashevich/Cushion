@@ -247,6 +247,14 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
                 input_node = input_node->next;
             }
 
+#if defined(CUSHION_EXTENSIONS)
+            cushion_output_finalize (instance);
+            if (cushion_instance_is_error_signaled (instance))
+            {
+                result = CUSHION_RESULT_LEX_FAILED;
+            }
+#endif
+
             fclose (instance->output);
         }
         else
