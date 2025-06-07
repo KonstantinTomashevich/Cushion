@@ -117,10 +117,10 @@ feature can be used inside regular macros, making something like
 
 Cushion introduces `__CUSHION_WRAPPED__` identifier for usage inside macros. If macro uses `__CUSHION_WRAPPED__`, then
 it becomes wrapper macro: wrapper macro must always be followed by block of code in curly braces, that is then
-inserted in place of `__CUSHION_WRAPPED__` identifiers. This is very useful when we need to embed some logic inside
-complex construction like some complex iteration. For example, if you're iterating on something with database-like API,
-you need to properly manage cursor, access handle, perhaps something else too. Which is usually the same almost 
-everywhere in your code, so it will be a good place for macro like that:
+inserted in place of `__CUSHION_WRAPPED__` identifiers (enclosing curly braces are not inserted). This is very useful 
+when we need to embed some logic inside complex construction like some complex iteration. For example, if you're 
+iterating on something with database-like API, you need to properly manage cursor, access handle, perhaps something 
+else too. Which is usually the same almost everywhere in your code, so it will be a good place for macro like that:
 
 ```c
 #define DATABASE_QUERY(VALUE_TYPE, QUERY, PARAMETER)                                                                   \

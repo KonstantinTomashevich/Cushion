@@ -1916,7 +1916,6 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         }
 
         // Append initial brace.
-        APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
         unsigned int brace_counter = 1u;
 
         while (brace_counter > 0u && !cushion_instance_is_error_signaled (state->instance))
@@ -1941,7 +1940,11 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
                     break;
                 }
 
-                APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
+                if (brace_counter > 0u)
+                {
+                    APPEND_WRAPPED_TOKEN (wrapped_tokens, &current_token, state->tokenization.cursor_line)
+                }
+
                 break;
 
             case CUSHION_TOKEN_TYPE_NEW_LINE:
