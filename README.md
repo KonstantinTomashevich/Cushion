@@ -172,23 +172,26 @@ consists of several commands that tell Cushion what to do:
   generated statements will be written after full preprocessing pass.
 
 - `CUSHION_STATEMENT_ACCUMULATOR_PUSH (statement_accumulator_identifier, options...) { ... your code ... }`
-  pushes code into accumulator with given identifier, essentially generating new code in that place. Accumulator with
-  given identifier is not required to already exist: it can be defined later and then pushes will be attached to it
-  at the moment of definition. Comma separated options provide more control on how statement is pushed. 
-  Supported options are:
+  pushes code into accumulator with given identifier, essentially generating new code in that place. Comma separated 
+  options provide more control on how statement is pushed. Supported options are:
 
     - `unique` -- given code is compared to the statements that were already pushed. If other exactly equal code was
       already pushed, then this push is skipped.
 
-    - `optional` -- does not generate error when preprocessing is finished, but accumulator was never defined.
+    - `optional` -- does not generate error when accumulator does not exist. In combination with `unordered`, does
+      not generate error when processing is finished, but there is no suitable accumulator.
 
-- `CUSHION_STATEMENT_ACCUMULATOR_REFERENCE (reference_identifier, source_identifier)` defines a reference to
-  statement accumulator, which can be used instead of an actual accumulator in push command. If there are pushes that
-  expect identifier equal to reference identifier, they will be pushed to the source accumulator. Reference can be
-  overridden down the road by calling `CUSHION_STATEMENT_ACCUMULATOR_REFERENCE` with the same reference identifier
-  and different source identifier. It will not affect pushes that were already made, but will affect future pushes.
-  The goal of references is to provide dynamic abstracted context for pushing that can be changed from outside when
-  needed without being explicitly specified in push command.
+    - `unordered` -- if there is no accumulator, push is saved for later and applied when accumulator with required
+      name is found. Signals error when processing is finished and accumulator is not found unless `optional` option
+      is specified.
+
+- `CUSHION_STATEMENT_ACCUMULATOR_REF (reference_identifier, source_identifier)` defines a reference to
+  statement accumulator, which can be used instead of an actual accumulator in push command. It can also receive
+  `unordered` pushes if any. Reference cannot point to each other, only to real accumulators, for the sake of 
+  simplicity. The goal of references is to provide dynamic abstracted context for pushing that can be changed from 
+  outside when needed without being explicitly specified in push command.
+
+- `CUSHION_STATEMENT_ACCUMULATOR_UNREF (reference_identifier)` destroys a reference with given name.
 
 To understand how it can be used, lets return to the database example from the above. Let's say that we want queries
 for different value types to be automatically generated in some translation-unit-local context structure. We can
@@ -237,7 +240,7 @@ struct database_context_2_t
     CUSHION_STATEMENT_ACCUMULATOR (database_context_2)
 };
 
-CUSHION_STATEMENT_ACCUMULATOR_REFERENCE (database_context_accumulator, database_context_1)
+CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, database_context_1)
 
 void database_function_1_a (struct database_context_1_t *database_context)
 {
@@ -270,7 +273,7 @@ void database_function_1_b (struct database_context_1_t *database_context)
     }
 }
 
-CUSHION_STATEMENT_ACCUMULATOR_REFERENCE (database_context_accumulator, database_context_2)
+CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, database_context_2)
 
 void database_function_2 (struct database_context_2_t *database_context)
 {

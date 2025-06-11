@@ -670,8 +670,8 @@ static enum cushion_identifier_kind_t lex_relculate_identifier_kind (const char 
     CHECK_KIND ("__CUSHION_WRAPPED__", CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_PUSH", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH)
-    CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_REFERENCE",
-                CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE)
+    CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_REF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF)
+    CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_UNREF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF)
 
     CHECK_KIND ("__FILE__", CUSHION_IDENTIFIER_KIND_FILE)
     CHECK_KIND ("__LINE__", CUSHION_IDENTIFIER_KIND_LINE)
@@ -2027,7 +2027,8 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
-        case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE:
+        case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF:
+        case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
             cushion_instance_lexer_error (state, meta, "Encountered unsupported reserved identifier in defined check.");
             return 0u;
 
@@ -2722,7 +2723,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 }
 
                 new_item->left_value = new_argument;
-                new_item->operator= next_operator;
+                new_item->operator = next_operator;
                 new_item->precedence = operator_precedence;
                 new_item->associativity = operator_associativity;
 
@@ -3282,7 +3283,7 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
         node = node->next;
     }
 
-    if (include_result == LEX_INCLUDE_RESULT_NOT_FOUND && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+    if (include_result != LEX_INCLUDE_RESULT_FULL && (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
         // Include not found. Preserve it in code.
         lex_update_line_mark (state, state->tokenization.file_name, start_line);
@@ -3698,6 +3699,845 @@ static inline struct lexer_pop_token_meta_t lex_skip_glue_comments_new_line (str
     return meta;
 }
 
+#if defined(CUSHION_EXTENSIONS)
+
+#    define USE_GUARDRAIL_SINCE_CURRENT_TOKEN                                                                          \
+        const unsigned int override_guardrail = state->tokenization.guardrail == NULL;                                 \
+        if (override_guardrail)                                                                                        \
+        {                                                                                                              \
+            state->tokenization.guardrail = current_token.begin;                                                       \
+        }                                                                                                              \
+                                                                                                                       \
+        const char *guardrail_base = state->tokenization.guardrail;
+
+/// \brief Corrects value of pointer string defended by the guardrail.
+/// \details Reads might offset the buffer, therefore defended value addresses might change.
+///          Guardrail prevents total drop of defended values, but it is impossible to preserve arbitrary pointers.
+#    define GUARDRAIL_EXTRACT(VALUE) (VALUE) - (guardrail_base - state->tokenization.guardrail)
+
+#    define LIFT_USED_GUARDRAIL                                                                                        \
+        if (override_guardrail)                                                                                        \
+        {                                                                                                              \
+            state->tokenization.guardrail = NULL;                                                                      \
+        }
+
+static struct cushion_token_t lex_create_file_macro_token (struct cushion_lexer_file_state_t *state);
+static struct cushion_token_t lex_create_line_macro_token (struct cushion_lexer_file_state_t *state);
+
+/// \details Defers and statement accumulator pushes should have the same rules for their content,
+///          therefore they're called extensions injectors and this logic is for them.
+static struct cushion_token_list_item_t *lex_extension_injector_content (struct cushion_lexer_file_state_t *state,
+                                                                         const char *safe_to_use_file_name)
+{
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return NULL)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"{\" after CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER.");
+        return NULL;
+    }
+
+    unsigned int brace_count = 1u;
+    struct cushion_token_list_item_t *token_first = NULL;
+    struct cushion_token_list_item_t *token_last = NULL;
+
+    while (brace_count > 0u)
+    {
+        current_token_meta = lexer_file_state_pop_token (state, &current_token);
+        if (cushion_instance_is_error_signaled (state->instance))
+        {
+            return NULL;
+        }
+
+        switch (current_token.type)
+        {
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+            // It is technically possible and even technically usable to put #line or #pragma inside push/defer, but it
+            // makes lexing implementation more difficult and it seems not worth it to support them inside.
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
+                "Encountered preprocessor directive while reading CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER "
+                "code block. Preprocessor directives are not supported there as their support would make it possible "
+                "to introduce circular dependency in code generation.");
+            return NULL;
+
+        case CUSHION_TOKEN_TYPE_PUNCTUATOR:
+            switch (current_token.punctuator_kind)
+            {
+            case CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE:
+                ++brace_count;
+                goto append_token;
+
+            case CUSHION_PUNCTUATOR_KIND_RIGHT_CURLY_BRACE:
+                --brace_count;
+
+                if (brace_count == 0u)
+                {
+                    break;
+                }
+
+                goto append_token;
+
+            default:
+                goto append_token;
+            }
+
+            break;
+
+        case CUSHION_TOKEN_TYPE_IDENTIFIER:
+            switch (current_token.identifier_kind)
+            {
+            case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_DEFER:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
+                    "Encountered cushion keywords in CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER code block, "
+                    "which is not supported as it might result in circular dependency in code generation.");
+                return NULL;
+
+            case CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA:
+                // It is possible to support _Pragma here, but it is just a little bit of extra work that is not really
+                // important and useful in practice, therefore we forbid it for now.
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Encountered _Pragma in CUSHION_STATEMENT_ACCUMULATOR_PUSH / "
+                                              "CUSHION_DEFER code block, which is not supported right now.");
+                return NULL;
+
+            default:
+            {
+                struct cushion_token_list_item_t *macro_tokens = lex_replace_identifier_if_macro (
+                    state, &current_token, &current_token_meta, LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_CODE);
+
+                if (macro_tokens)
+                {
+                    lexer_file_state_push_tokens (state, macro_tokens, LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT);
+                }
+                else
+                {
+                    goto append_token;
+                }
+
+                break;
+            }
+            }
+
+            break;
+
+        case CUSHION_TOKEN_TYPE_NEW_LINE:
+        case CUSHION_TOKEN_TYPE_COMMENT:
+            // Skipped as for macro replacement.
+            break;
+
+        case CUSHION_TOKEN_TYPE_END_OF_FILE:
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
+                "Got to the end of file while parsing CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER code block.");
+            return NULL;
+
+        default:
+        append_token:
+        {
+            struct cushion_token_list_item_t *new_token =
+                cushion_save_token_to_memory (state->instance, &current_token, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+            new_token->file = safe_to_use_file_name;
+            new_token->line = current_token_meta.line;
+
+            if (current_token_meta.flags & LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT)
+            {
+                new_token->flags |= CUSHION_TOKEN_LIST_ITEM_FLAG_INJECTED_MACRO_REPLACEMENT;
+            }
+
+            if (token_last)
+            {
+                token_last->next = new_token;
+            }
+            else
+            {
+                token_first = new_token;
+            }
+
+            token_last = new_token;
+        }
+        }
+    }
+
+    return token_first;
+}
+
+static struct cushion_statement_accumulator_t *find_statement_accumulator (struct cushion_instance_t *instance,
+                                                                           const char *begin,
+                                                                           const char *end)
+{
+    const unsigned int length = end - begin;
+    struct cushion_statement_accumulator_t *accumulator = instance->statement_accumulators_first;
+
+    while (accumulator)
+    {
+        if (accumulator->name_length == length && strncmp (accumulator->name, begin, length) == 0)
+        {
+            return accumulator;
+        }
+
+        accumulator = accumulator->next;
+    }
+
+    return NULL;
+}
+
+static struct cushion_statement_accumulator_ref_t *find_statement_accumulator_ref (struct cushion_instance_t *instance,
+                                                                                   const char *begin,
+                                                                                   const char *end)
+{
+    const unsigned int length = end - begin;
+    struct cushion_statement_accumulator_ref_t *ref = instance->statement_accumulator_refs_first;
+
+    while (ref)
+    {
+        if (ref->name_length == length && strncmp (ref->name, begin, length) == 0)
+        {
+            return ref;
+        }
+
+        ref = ref->next;
+    }
+
+    return NULL;
+}
+
+static unsigned int lex_is_push_macro_list_equal (struct cushion_token_list_item_t *first_list,
+                                                  struct cushion_token_list_item_t *second_list)
+{
+    while (first_list && second_list)
+    {
+        if (first_list->token.type != second_list->token.type ||
+            (first_list->token.end - first_list->token.begin) != (second_list->token.end - second_list->token.begin) ||
+            strncmp (first_list->token.begin, second_list->token.begin,
+                     first_list->token.end - first_list->token.begin) != 0)
+        {
+            return 0u;
+        }
+
+        first_list = first_list->next;
+        second_list = second_list->next;
+    }
+
+    // Only returns true if both are NULL.
+    return first_list == second_list;
+}
+
+static inline unsigned int statement_accumulator_has_equal_entry (struct cushion_statement_accumulator_t *accumulator,
+                                                                  struct cushion_token_list_item_t *content)
+{
+    struct cushion_statement_accumulator_entry_t *other_entry = accumulator->entries_first;
+    while (other_entry)
+    {
+        if (lex_is_push_macro_list_equal (content, other_entry->content_first))
+        {
+            return 1u;
+        }
+
+        other_entry = other_entry->next;
+    }
+
+    return 0u;
+}
+
+static void check_statement_accumulator_unordered_pushes (struct cushion_lexer_file_state_t *state,
+                                                          struct cushion_statement_accumulator_t *accumulator,
+                                                          const char *under_name,
+                                                          unsigned int under_name_length)
+{
+    struct cushion_statement_accumulator_unordered_push_t *unordered_push =
+        state->instance->statement_unordered_push_first;
+    struct cushion_statement_accumulator_unordered_push_t *previous = NULL;
+
+    while (unordered_push)
+    {
+        if (unordered_push->name_length == under_name_length &&
+            strncmp (unordered_push->name, under_name, unordered_push->name_length) == 0)
+        {
+            if ((unordered_push->flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNIQUE) == 0u ||
+                !statement_accumulator_has_equal_entry (accumulator, unordered_push->entry_template.content_first))
+            {
+                struct cushion_statement_accumulator_entry_t *entry = cushion_allocator_allocate (
+                    &state->instance->allocator, sizeof (struct cushion_statement_accumulator_entry_t),
+                    _Alignof (struct cushion_statement_accumulator_entry_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+                *entry = unordered_push->entry_template;
+                if (accumulator->entries_last)
+                {
+                    accumulator->entries_last->next = entry;
+                }
+                else
+                {
+                    accumulator->entries_first = entry;
+                }
+
+                accumulator->entries_last = entry;
+            }
+
+            if (previous)
+            {
+                previous->next = unordered_push->next;
+            }
+            else
+            {
+                state->instance->statement_unordered_push_first = unordered_push->next;
+            }
+
+            if (unordered_push == state->instance->statement_unordered_push_last)
+            {
+                state->instance->statement_unordered_push_last = previous;
+            }
+        }
+        else
+        {
+            previous = unordered_push;
+        }
+
+        unordered_push = unordered_push->next;
+    }
+}
+
+static void lex_code_statement_accumulator (struct cushion_lexer_file_state_t *state)
+{
+    // TODO: For defer implementation in the future: if used in context with defers enabled, add flag that forbids
+    //       any jump-like instruction inside pushes for this accumulator.
+
+    const unsigned int start_line = state->last_marked_line;
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"(\" after CUSHION_STATEMENT_ACCUMULATOR.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    // Remark: macro unwraps are intentionally not supported for accumulator and ref names as it would only make
+    // accumulator management more complex for the user.
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected identifier as argument for CUSHION_STATEMENT_ACCUMULATOR.");
+        return;
+    }
+
+    if (find_statement_accumulator (state->instance, current_token.begin, current_token.end) ||
+        find_statement_accumulator_ref (state->instance, current_token.begin, current_token.end))
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Unable to create statement accumulator with name as it is already used "
+                                      "for other accumulator or reference.");
+        return;
+    }
+
+    lex_update_line_mark (state, current_token_meta.file, start_line);
+    struct cushion_statement_accumulator_t *accumulator = cushion_allocator_allocate (
+        &state->instance->allocator, sizeof (struct cushion_statement_accumulator_t),
+        _Alignof (struct cushion_statement_accumulator_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    accumulator->name = cushion_instance_copy_char_sequence_inside (
+        state->instance, current_token.begin, current_token.end, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+    accumulator->name_length = current_token.end - current_token.begin;
+
+    accumulator->entries_first = NULL;
+    accumulator->entries_last = NULL;
+    accumulator->output_node = cushion_output_add_deferred_sink (state->instance, state->last_marked_file, start_line);
+
+    accumulator->next = state->instance->statement_accumulators_first;
+    state->instance->statement_accumulators_first = accumulator;
+
+    check_statement_accumulator_unordered_pushes (state, accumulator, accumulator->name, accumulator->name_length);
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \")\" after CUSHION_STATEMENT_ACCUMULATOR argument.");
+        return;
+    }
+}
+
+static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state_t *state)
+{
+    const char *file = state->last_marked_file;
+    const unsigned int line = state->last_marked_line;
+
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"(\" after CUSHION_STATEMENT_ACCUMULATOR.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    // Remark: macro unwraps are intentionally not supported for accumulator and ref names as it would only make
+    // accumulator management more complex for the user.
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+    {
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
+            "Expected accumulator name identifier as argument for CUSHION_STATEMENT_ACCUMULATOR.");
+        return;
+    }
+
+    // Use guardrail to preserve accumulator or ref identifier.
+    USE_GUARDRAIL_SINCE_CURRENT_TOKEN
+    const char *name_begin = current_token.begin;
+    const char *name_end = current_token.end;
+    enum cushion_statement_accumulator_push_flags_t flags = CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_NONE;
+
+    while (lexer_file_state_should_continue (state))
+    {
+        current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+        LEX_WHEN_ERROR (return)
+
+        if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
+            (current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_COMMA &&
+             current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS))
+        {
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
+                "Expected \",\" or \")\" after argument in CUSHION_STATEMENT_ACCUMULATOR_PUSH.");
+            return;
+        }
+
+        if (current_token.punctuator_kind == CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+        {
+            // No more flags.
+            break;
+        }
+
+        current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+        LEX_WHEN_ERROR (return)
+
+        // Remark: macro unwraps are intentionally not supported for accumulator push flags as it would only make
+        // accumulator management more complex for the user.
+
+        if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+        {
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
+                "Expected accumulator name identifier as argument for CUSHION_STATEMENT_ACCUMULATOR.");
+            return;
+        }
+
+        const unsigned int length = current_token.end - current_token.begin;
+
+#    define CHECK_FLAG(LITERAL, VALUE)                                                                                 \
+        if (length == sizeof (LITERAL) - 1u && strncmp (current_token.begin, LITERAL, length) == 0)                    \
+        {                                                                                                              \
+            if (flags & VALUE)                                                                                         \
+            {                                                                                                          \
+                cushion_instance_lexer_error (state, &current_token_meta,                                              \
+                                              "Flag \"%s\" of CUSHION_STATEMENT_ACCUMULATOR_PUSH is repeated twice."); \
+                return;                                                                                                \
+            }                                                                                                          \
+                                                                                                                       \
+            flags |= VALUE;                                                                                            \
+        }                                                                                                              \
+        else
+
+        CHECK_FLAG ("unique", CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNIQUE)
+        CHECK_FLAG ("optional", CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_OPTIONAL)
+        CHECK_FLAG ("unordered", CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNORDERED)
+        {
+            // Copy flag name in order to properly pass it to error format.
+            const char *flag_name = cushion_instance_copy_char_sequence_inside (
+                state->instance, current_token.begin, current_token.end, CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Got unknown flag \"%s\" in CUSHION_STATEMENT_ACCUMULATOR.", flag_name);
+            return;
+        }
+#    undef CHECK_FLAG
+    }
+
+    LEX_WHEN_ERROR (return)
+    name_begin = GUARDRAIL_EXTRACT (name_begin);
+    name_end = GUARDRAIL_EXTRACT (name_end);
+
+    struct cushion_statement_accumulator_t *accumulator =
+        find_statement_accumulator (state->instance, name_begin, name_end);
+
+    if (!accumulator)
+    {
+        struct cushion_statement_accumulator_ref_t *ref =
+            find_statement_accumulator_ref (state->instance, name_begin, name_end);
+
+        if (ref)
+        {
+            accumulator = ref->accumulator;
+        }
+    }
+
+    const char *saved_accumulator_name = NULL;
+    unsigned int saved_accumulator_name_length = 0u;
+
+    if (!accumulator)
+    {
+        if (flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNORDERED)
+        {
+            // Only makes sense to save name if there is no accumulator in sight and push is unordered.
+            saved_accumulator_name = cushion_instance_copy_char_sequence_inside (state->instance, name_begin, name_end,
+                                                                                 CUSHION_ALLOCATION_CLASS_PERSISTENT);
+            saved_accumulator_name_length = name_end - name_begin;
+        }
+        else if ((flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_OPTIONAL) == 0u)
+        {
+            const char *name_for_log = cushion_instance_copy_char_sequence_inside (
+                state->instance, name_begin, name_end, CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+            cushion_instance_lexer_error (
+                state, &current_token_meta,
+                "Unable to find accumulator or reference \"%s\" for "
+                "CUSHION_STATEMENT_ACCUMULATOR_PUSH and push is neither optional nor unordered.",
+                name_for_log);
+            return;
+        }
+    }
+
+    LIFT_USED_GUARDRAIL
+    const char *saved_file =
+        cushion_instance_copy_null_terminated_inside (state->instance, file, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+    struct cushion_token_list_item_t *content = lex_extension_injector_content (state, saved_file);
+    LEX_WHEN_ERROR (return)
+
+    if (accumulator)
+    {
+        if ((flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNIQUE) == 0u ||
+            !statement_accumulator_has_equal_entry (accumulator, content))
+        {
+            struct cushion_statement_accumulator_entry_t *entry = cushion_allocator_allocate (
+                &state->instance->allocator, sizeof (struct cushion_statement_accumulator_entry_t),
+                _Alignof (struct cushion_statement_accumulator_entry_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+            entry->next = NULL;
+            entry->source_file = saved_file;
+            entry->source_line = line;
+            entry->content_first = content;
+
+            if (accumulator->entries_last)
+            {
+                accumulator->entries_last->next = entry;
+            }
+            else
+            {
+                accumulator->entries_first = entry;
+            }
+
+            accumulator->entries_last = entry;
+        }
+    }
+    else
+    {
+        struct cushion_statement_accumulator_unordered_push_t *push = cushion_allocator_allocate (
+            &state->instance->allocator, sizeof (struct cushion_statement_accumulator_unordered_push_t),
+            _Alignof (struct cushion_statement_accumulator_unordered_push_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+        push->name = saved_accumulator_name;
+        push->name_length = saved_accumulator_name_length;
+        push->flags = flags;
+
+        push->entry_template.next = NULL;
+        push->entry_template.source_file =
+            cushion_instance_copy_null_terminated_inside (state->instance, file, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+        push->entry_template.source_line = line;
+        push->entry_template.content_first = content;
+
+        if (state->instance->statement_unordered_push_last)
+        {
+            state->instance->statement_unordered_push_last->next = push;
+        }
+        else
+        {
+            state->instance->statement_unordered_push_first = push;
+        }
+
+        push->next = NULL;
+        state->instance->statement_unordered_push_last = push;
+    }
+}
+
+static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_t *state)
+{
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"(\" after CUSHION_STATEMENT_ACCUMULATOR_REF.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected identifier as first argument for CUSHION_STATEMENT_ACCUMULATOR_REF.");
+        return;
+    }
+
+    const unsigned int length = current_token.end - current_token.begin;
+    struct cushion_statement_accumulator_ref_t *ref = state->instance->statement_accumulator_refs_first;
+
+    while (ref)
+    {
+        if (ref->name_length == length && strncmp (ref->name, current_token.begin, length) == 0)
+        {
+            break;
+        }
+
+        ref = ref->next;
+    }
+
+    if (!ref)
+    {
+        ref = cushion_allocator_allocate (
+            &state->instance->allocator, sizeof (struct cushion_statement_accumulator_ref_t),
+            _Alignof (struct cushion_statement_accumulator_ref_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+        ref->name = cushion_instance_copy_char_sequence_inside (state->instance, current_token.begin, current_token.end,
+                                                                CUSHION_ALLOCATION_CLASS_PERSISTENT);
+        ref->name_length = current_token.end - current_token.begin;
+        ref->accumulator = NULL;
+
+        ref->next = state->instance->statement_accumulator_refs_first;
+        state->instance->statement_accumulator_refs_first = ref;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_COMMA)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \",\" after first argument of CUSHION_STATEMENT_ACCUMULATOR_REF.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected identifier as second argument for CUSHION_STATEMENT_ACCUMULATOR_REF.");
+        return;
+    }
+
+    ref->accumulator = find_statement_accumulator (state->instance, current_token.begin, current_token.end);
+    if (!ref->accumulator)
+    {
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
+            "Cannot find accumulator reference as second argument CUSHION_STATEMENT_ACCUMULATOR_REF. Only real "
+            "accumulators, not other references, are supported, because introducing reference support here might "
+            "introduce hard to track issues in user code.");
+        return;
+    }
+
+    check_statement_accumulator_unordered_pushes (state, ref->accumulator, ref->name, ref->name_length);
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \")\" after CUSHION_STATEMENT_ACCUMULATOR_REF arguments.");
+        return;
+    }
+}
+
+static void lex_code_statement_accumulator_unref (struct cushion_lexer_file_state_t *state)
+{
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \"(\" after CUSHION_STATEMENT_ACCUMULATOR_UNREF.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected identifier as argument for CUSHION_STATEMENT_ACCUMULATOR_UNREF.");
+        return;
+    }
+
+    const unsigned int length = current_token.end - current_token.begin;
+    struct cushion_statement_accumulator_ref_t *ref = state->instance->statement_accumulator_refs_first;
+    struct cushion_statement_accumulator_ref_t *ref_previous = NULL;
+
+    while (ref)
+    {
+        if (ref->name_length == length && strncmp (ref->name, current_token.begin, length) == 0)
+        {
+            break;
+        }
+
+        ref_previous = ref;
+        ref = ref->next;
+    }
+
+    if (!ref)
+    {
+        cushion_instance_lexer_error (
+            state, &current_token_meta,
+            "Unable to find statement accumulator reference for CUSHION_STATEMENT_ACCUMULATOR_UNREF.");
+        return;
+    }
+
+    // Just remove reference from the list.
+    if (ref_previous)
+    {
+        ref_previous->next = ref->next;
+    }
+    else
+    {
+        state->instance->statement_accumulator_refs_first = ref->next;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \")\" after CUSHION_STATEMENT_ACCUMULATOR_UNREF argument.");
+        return;
+    }
+}
+#endif
+
+static struct cushion_token_t lex_create_file_macro_token (struct cushion_lexer_file_state_t *state)
+{
+    const size_t file_name_length = strlen (state->tokenization.file_name);
+    char *formatted_file_name = cushion_allocator_allocate (&state->instance->allocator, file_name_length + 3u,
+                                                            _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+    formatted_file_name[0u] = '"';
+    memcpy (formatted_file_name + 1u, state->tokenization.file_name, file_name_length);
+    formatted_file_name[file_name_length - 2u] = '"';
+    formatted_file_name[file_name_length - 1u] = '\0';
+
+    return (struct cushion_token_t) {
+        .type = CUSHION_TOKEN_TYPE_STRING_LITERAL,
+        .begin = formatted_file_name,
+        .end = formatted_file_name + file_name_length + 2u,
+        .symbolic_literal =
+            {
+                .encoding = CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY,
+                .begin = formatted_file_name + 1u,
+                .end = formatted_file_name + file_name_length + 1u,
+            },
+    };
+}
+
+static struct cushion_token_t lex_create_line_macro_token (struct cushion_lexer_file_state_t *state)
+{
+    // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
+    unsigned int value = state->last_marked_line;
+    unsigned int string_length = 0u;
+
+    if (value > 0u)
+    {
+        while (value > 0u)
+        {
+            ++string_length;
+            value /= 10u;
+        }
+    }
+    else
+    {
+        string_length = 1u;
+    }
+
+    char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
+                                                          _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+    formatted_literal[string_length] = '\0';
+
+    if (value > 0u)
+    {
+        char *cursor = formatted_literal + string_length - 1u;
+        while (value > 0u)
+        {
+            *cursor = (char) ('0' + (value % 10u));
+            --cursor;
+            value /= 10u;
+        }
+    }
+    else
+    {
+        formatted_literal[0u] = '0';
+    }
+
+    return (struct cushion_token_t) {
+        .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
+        .begin = formatted_literal,
+        .end = formatted_literal + string_length,
+        .unsigned_number_value = state->last_marked_line,
+    };
+}
+
 static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state)
 {
     const unsigned int start_line = state->last_marked_line;
@@ -3804,76 +4644,14 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state,
     {
     case CUSHION_IDENTIFIER_KIND_FILE:
     {
-        const size_t file_name_length = strlen (state->tokenization.file_name);
-        char *formatted_file_name = cushion_allocator_allocate (&state->instance->allocator, file_name_length + 3u,
-                                                                _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
-
-        formatted_file_name[0u] = '"';
-        memcpy (formatted_file_name + 1u, state->tokenization.file_name, file_name_length);
-        formatted_file_name[file_name_length - 2u] = '"';
-        formatted_file_name[file_name_length - 1u] = '\0';
-
-        struct cushion_token_t token = {
-            .type = CUSHION_TOKEN_TYPE_STRING_LITERAL,
-            .begin = formatted_file_name,
-            .end = formatted_file_name + file_name_length + 2u,
-            .symbolic_literal =
-                {
-                    .encoding = CUSHION_TOKEN_SUBSEQUENCE_ENCODING_ORDINARY,
-                    .begin = formatted_file_name + 1u,
-                    .end = formatted_file_name + file_name_length + 1u,
-                },
-        };
-
+        struct cushion_token_t token = lex_create_file_macro_token (state);
         lexer_file_state_reinsert_token (state, &token);
         return;
     }
 
     case CUSHION_IDENTIFIER_KIND_LINE:
     {
-        // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
-        unsigned int value = state->last_marked_line;
-        unsigned int string_length = 0u;
-
-        if (value > 0u)
-        {
-            while (value > 0u)
-            {
-                ++string_length;
-                value /= 10u;
-            }
-        }
-        else
-        {
-            string_length = 1u;
-        }
-
-        char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
-                                                              _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
-        formatted_literal[string_length] = '\0';
-
-        if (value > 0u)
-        {
-            char *cursor = formatted_literal + string_length - 1u;
-            while (value > 0u)
-            {
-                *cursor = (char) ('0' + (value % 10u));
-                --cursor;
-                value /= 10u;
-            }
-        }
-        else
-        {
-            formatted_literal[0u] = '0';
-        }
-
-        struct cushion_token_t token = {
-            .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
-            .begin = formatted_literal,
-            .end = formatted_literal + string_length,
-            .unsigned_number_value = state->last_marked_line,
-        };
-
+        struct cushion_token_t token = lex_create_line_macro_token (state);
         lexer_file_state_reinsert_token (state, &token);
         return;
     }
@@ -3883,10 +4661,45 @@ static void lex_code_identifier (struct cushion_lexer_file_state_t *state,
                                       "Encountered cushion preserve keyword in unexpected context.");
         return;
 
+#if defined(CUSHION_EXTENSIONS)
+    case CUSHION_IDENTIFIER_KIND_CUSHION_DEFER:
+        cushion_instance_lexer_error (state, current_token_meta, "Cushion defer feature is not yet implemented.");
+        return;
+
     case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
         cushion_instance_lexer_error (state, current_token_meta,
                                       "Encountered cushion wrapped keyword in unexpected context.");
         return;
+
+#    define CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED                                                             \
+        if (!cushion_instance_has_feature (state->instance, CUSHION_FEATURE_STATEMENT_ACCUMULATOR))                    \
+        {                                                                                                              \
+            cushion_instance_lexer_error (                                                                             \
+                state, current_token_meta,                                                                             \
+                "Encountered statement accumulator keyword, but this feature is not enabled.");                        \
+            return;                                                                                                    \
+        }
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR:
+        CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED
+        lex_code_statement_accumulator (state);
+        return;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
+        CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED
+        lex_code_statement_accumulator_push (state);
+        return;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF:
+        CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED
+        lex_code_statement_accumulator_ref (state);
+        return;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
+        CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED
+        lex_code_statement_accumulator_unref (state);
+        return;
+#endif
 
     case CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA:
         lex_code_macro_pragma (state);
@@ -3957,6 +4770,38 @@ void cushion_lex_root_file (struct cushion_instance_t *instance, const char *pat
     fclose (input_file);
 }
 
+static void make_lex_state_path_writeable_to_literal (struct cushion_lexer_file_state_t *state)
+{
+    // Currently, we convert all "\" and "\\" occurrences in path to "/", so it is as easy to paste it into code.
+    // Should be updated for more platform-specific logic if causes issues on Windows for some reason.
+
+    const char *input = state->file_name;
+    char *output = state->file_name;
+
+    while (*input)
+    {
+        if (*input == '\\')
+        {
+            // Skip additional "\" if it exists.
+            if (*input == '\\')
+            {
+                ++input;
+            }
+
+            *output = '/';
+        }
+        else
+        {
+            *output = *input;
+        }
+
+        ++input;
+        ++output;
+    }
+
+    *output = '\0';
+}
+
 void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
                                    FILE *input_file,
                                    const char *path,
@@ -3994,7 +4839,9 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
         return;
     }
 
+    make_lex_state_path_writeable_to_literal (state);
     cushion_instance_output_depfile_entry (state->instance, state->file_name);
+
     if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
     {
         cushion_instance_output_line_marker (instance, state->file_name, 1u);
@@ -4183,3 +5030,161 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
     // so there is usually no need for aggressive memory reuse.
     cushion_allocator_reset_transient (&instance->allocator, allocation_marker);
 }
+
+#if defined(CUSHION_EXTENSIONS)
+static void output_extension_injector_context (struct cushion_instance_t *instance,
+                                               struct cushion_token_list_item_t *content)
+{
+    if (!content || cushion_instance_is_error_signaled (instance))
+    {
+        return;
+    }
+
+    cushion_instance_output_null_terminated (instance, "\n");
+    cushion_instance_output_line_marker (instance, content->file, content->line);
+
+    const char *last_output_file = content->file;
+    unsigned int last_output_line = content->line;
+    unsigned int previous_is_macro = 0u;
+
+    while (content && !cushion_instance_is_error_signaled (instance))
+    {
+        if (last_output_line != content->line ||
+            (last_output_file != content->file && strcmp (last_output_file, content->file) != 0))
+        {
+            const int max_lines_to_cover_with_new_line = 5u;
+            if (last_output_line < content->line &&
+                (int) content->line - (int) last_output_line < max_lines_to_cover_with_new_line)
+            {
+                int difference = (int) content->line - (int) last_output_line;
+                while (difference)
+                {
+                    cushion_instance_output_null_terminated (instance, "\n");
+                    --difference;
+                }
+            }
+            else
+            {
+                cushion_instance_output_null_terminated (instance, "\n");
+                cushion_instance_output_line_marker (instance, content->file, content->line);
+            }
+
+            last_output_file = content->file;
+            last_output_line = content->line;
+        }
+        else if (previous_is_macro)
+        {
+            // Output guarding space to avoid merging macro-related tokens by mistake.
+            cushion_instance_output_null_terminated (instance, " ");
+        }
+
+        switch (content->token.type)
+        {
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+        case CUSHION_TOKEN_TYPE_NEW_LINE:
+        case CUSHION_TOKEN_TYPE_COMMENT:
+        case CUSHION_TOKEN_TYPE_END_OF_FILE:
+            // Not supported and error should've been printed during block lexing.
+            assert (0u);
+            break;
+
+        case CUSHION_TOKEN_TYPE_IDENTIFIER:
+            switch (content->token.identifier_kind)
+            {
+            case CUSHION_IDENTIFIER_KIND_FILE:
+                cushion_instance_output_null_terminated (instance, "\"");
+                cushion_instance_output_null_terminated (instance, content->file);
+                cushion_instance_output_null_terminated (instance, "\"");
+                break;
+
+            case CUSHION_IDENTIFIER_KIND_LINE:
+                cushion_instance_output_formatted (instance, "%u", (unsigned int) content->line);
+                break;
+
+            case CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA:
+                // Not supported and error should've been printed during block lexing.
+                assert (0u);
+                break;
+
+            default:
+                cushion_instance_output_sequence (instance, content->token.begin, content->token.end);
+                break;
+            }
+            break;
+
+        case CUSHION_TOKEN_TYPE_PUNCTUATOR:
+        case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
+        case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
+        case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
+        case CUSHION_TOKEN_TYPE_STRING_LITERAL:
+        case CUSHION_TOKEN_TYPE_GLUE:
+        case CUSHION_TOKEN_TYPE_OTHER:
+            cushion_instance_output_sequence (instance, content->token.begin, content->token.end);
+            break;
+        }
+
+        previous_is_macro = content->flags & CUSHION_TOKEN_LIST_ITEM_FLAG_INJECTED_MACRO_REPLACEMENT;
+        content = content->next;
+    }
+}
+
+void cushion_lex_finalize_statement_accumulators (struct cushion_instance_t *instance)
+{
+    struct cushion_statement_accumulator_unordered_push_t *unordered_push = instance->statement_unordered_push_first;
+    while (unordered_push)
+    {
+        if ((unordered_push->flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_OPTIONAL) == 0u)
+        {
+            struct cushion_error_context_t error_context = {
+                .file = unordered_push->entry_template.source_file,
+                .line = unordered_push->entry_template.source_line,
+                .column = UINT_MAX,
+            };
+
+            cushion_instance_execution_error (
+                instance, error_context,
+                "Failed to resolve non-optional unordered push: target accumulator was never found.");
+        }
+
+        unordered_push = unordered_push->next;
+    }
+
+    struct cushion_statement_accumulator_t *accumulator = instance->statement_accumulators_first;
+    while (accumulator)
+    {
+        cushion_output_select_sink (instance, accumulator->output_node);
+        struct cushion_statement_accumulator_entry_t *entry = accumulator->entries_first;
+
+        while (entry)
+        {
+            output_extension_injector_context (instance, entry->content_first);
+            entry = entry->next;
+        }
+
+        if (accumulator->entries_first)
+        {
+            // Restore file and line information to accumulator initial state.
+            cushion_instance_output_null_terminated (instance, "\n");
+            cushion_instance_output_line_marker (instance, accumulator->output_node->source_file,
+                                                 accumulator->output_node->source_line);
+        }
+
+        cushion_output_finish_sink (instance, accumulator->output_node);
+        accumulator = accumulator->next;
+    }
+}
+#endif

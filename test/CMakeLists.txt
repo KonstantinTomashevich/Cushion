@@ -39,4 +39,10 @@ register_test ("multiple_input" "--input"
         "${CMAKE_CURRENT_SOURCE_DIR}/source/multiple_input_append_2.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/source/multiple_input_append_3.c")
 register_test ("pragma_trivial")
+register_test ("statement_accumulator_combine_files" "--features" "statement-accumulator")
+register_test ("statement_accumulator_macro" "--features" "wrapper-macro" "statement-accumulator")
+register_test ("statement_accumulator_optional" "--features" "statement-accumulator")
+register_test ("statement_accumulator_trivial" "--features" "statement-accumulator")
+register_test ("statement_accumulator_unique" "--features" "statement-accumulator")
+register_test ("statement_accumulator_unordered" "--features" "statement-accumulator")
 

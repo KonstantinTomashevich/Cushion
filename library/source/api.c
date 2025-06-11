@@ -248,7 +248,9 @@ enum cushion_result_t cushion_context_execute (cushion_context_t context)
             }
 
 #if defined(CUSHION_EXTENSIONS)
+            cushion_lex_finalize_statement_accumulators (instance);
             cushion_output_finalize (instance);
+
             if (cushion_instance_is_error_signaled (instance))
             {
                 result = CUSHION_RESULT_LEX_FAILED;

@@ -164,6 +164,12 @@ struct cushion_instance_t
     struct cushion_deferred_output_node_t *deferred_output_selected;
 
     struct cushion_output_buffer_node_t *free_buffers_first;
+
+    struct cushion_statement_accumulator_t *statement_accumulators_first;
+    struct cushion_statement_accumulator_ref_t *statement_accumulator_refs_first;
+
+    struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_first;
+    struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_last;
 #endif
 
     struct cushion_macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
@@ -281,6 +287,49 @@ struct cushion_output_buffer_node_t
     struct cushion_output_buffer_node_t *next;
     char *end;
     char data[CUSHION_OUTPUT_BUFFER_NODE_SIZE];
+};
+
+struct cushion_statement_accumulator_t
+{
+    struct cushion_statement_accumulator_t *next;
+    const char *name;
+    unsigned int name_length;
+    struct cushion_statement_accumulator_entry_t *entries_first;
+    struct cushion_statement_accumulator_entry_t *entries_last;
+    struct cushion_deferred_output_node_t *output_node;
+};
+
+struct cushion_statement_accumulator_entry_t
+{
+    struct cushion_statement_accumulator_entry_t *next;
+    const char *source_file;
+    unsigned int source_line;
+    struct cushion_token_list_item_t *content_first;
+};
+
+struct cushion_statement_accumulator_ref_t
+{
+    struct cushion_statement_accumulator_ref_t *next;
+    const char *name;
+    unsigned int name_length;
+    struct cushion_statement_accumulator_t *accumulator;
+};
+
+enum cushion_statement_accumulator_push_flags_t
+{
+    CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_NONE = 0u,
+    CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNIQUE = 1u << 0u,
+    CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_OPTIONAL = 1u << 1u,
+    CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_UNORDERED = 1u << 2u,
+};
+
+struct cushion_statement_accumulator_unordered_push_t
+{
+    struct cushion_statement_accumulator_unordered_push_t *next;
+    const char *name;
+    unsigned int name_length;
+    enum cushion_statement_accumulator_push_flags_t flags;
+    struct cushion_statement_accumulator_entry_t entry_template;
 };
 #endif
 
@@ -557,7 +606,8 @@ enum cushion_identifier_kind_t
     CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH,
-    CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REFERENCE,
+    CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF,
+    CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF,
 
     CUSHION_IDENTIFIER_KIND_DEFINED,
     CUSHION_IDENTIFIER_KIND_HAS_INCLUDE,
@@ -685,6 +735,9 @@ enum cushion_token_list_item_flags_t
 {
     CUSHION_TOKEN_LIST_ITEM_FLAG_NONE = 0u,
     CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK = 1u << 0u,
+
+    /// \brief Special flag to preserve macro replacement info in extension injector lists.
+    CUSHION_TOKEN_LIST_ITEM_FLAG_INJECTED_MACRO_REPLACEMENT = 1u << 1u,
 };
 #endif
 
@@ -774,5 +827,9 @@ void cushion_lex_file_from_handle (struct cushion_instance_t *instance,
                                    FILE *input_file,
                                    const char *path,
                                    enum cushion_lex_file_flags_t flags);
+
+#if defined(CUSHION_EXTENSIONS)
+void cushion_lex_finalize_statement_accumulators (struct cushion_instance_t *instance);
+#endif
 
 CUSHION_HEADER_END

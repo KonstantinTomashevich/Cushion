@@ -166,6 +166,12 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
     instance->deferred_output_selected = NULL;
 
     instance->free_buffers_first = NULL;
+
+    instance->statement_accumulators_first = NULL;
+    instance->statement_accumulator_refs_first = NULL;
+
+    instance->statement_unordered_push_first = NULL;
+    instance->statement_unordered_push_last = NULL;
 #endif
 
     instance->inputs_first = NULL;
@@ -464,7 +470,7 @@ static void flush_sink (struct cushion_instance_t *instance, struct cushion_defe
 
 void cushion_output_finish_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink)
 {
-    assert ((sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED) == 0u);
+    assert (sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED);
     sink->flags &= ~CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED;
 
     if (sink == instance->deferred_output_first)
