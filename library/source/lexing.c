@@ -3701,25 +3701,18 @@ static inline struct lexer_pop_token_meta_t lex_skip_glue_comments_new_line (str
 
 #if defined(CUSHION_EXTENSIONS)
 
-#    define USE_GUARDRAIL_SINCE_CURRENT_TOKEN                                                                          \
-        const unsigned int override_guardrail = state->tokenization.guardrail == NULL;                                 \
-        if (override_guardrail)                                                                                        \
-        {                                                                                                              \
-            state->tokenization.guardrail = current_token.begin;                                                       \
-        }                                                                                                              \
-                                                                                                                       \
-        const char *guardrail_base = state->tokenization.guardrail;
+#    define GUARDRAIL_ACQUIRE(FEATURE, VALUE)                                                                          \
+        assert (!state->tokenization.guardrail_##FEATURE);                                                             \
+        state->tokenization.guardrail_##FEATURE = VALUE;                                                               \
+        state->tokenization.guardrail_##FEATURE##_base = VALUE
 
-/// \brief Corrects value of pointer string defended by the guardrail.
-/// \details Reads might offset the buffer, therefore defended value addresses might change.
-///          Guardrail prevents total drop of defended values, but it is impossible to preserve arbitrary pointers.
-#    define GUARDRAIL_EXTRACT(VALUE) (VALUE) - (guardrail_base - state->tokenization.guardrail)
+#    define GUARDRAIL_EXTRACT(FEATURE, VALUE)                                                                          \
+        ((VALUE) - (state->tokenization.guardrail_##FEATURE##_base - state->tokenization.guardrail_##FEATURE))
 
-#    define LIFT_USED_GUARDRAIL                                                                                        \
-        if (override_guardrail)                                                                                        \
-        {                                                                                                              \
-            state->tokenization.guardrail = NULL;                                                                      \
-        }
+#    define GUARDRAIL_RELEASE(FEATURE)                                                                                 \
+        assert (state->tokenization.guardrail_##FEATURE);                                                              \
+        state->tokenization.guardrail_##FEATURE = NULL;                                                                \
+        state->tokenization.guardrail_##FEATURE##_base = NULL
 
 static struct cushion_token_t lex_create_file_macro_token (struct cushion_lexer_file_state_t *state);
 static struct cushion_token_t lex_create_line_macro_token (struct cushion_lexer_file_state_t *state);
@@ -4124,7 +4117,7 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
     }
 
     // Use guardrail to preserve accumulator or ref identifier.
-    USE_GUARDRAIL_SINCE_CURRENT_TOKEN
+    GUARDRAIL_ACQUIRE (statement_accumulator, current_token.begin);
     const char *name_begin = current_token.begin;
     const char *name_end = current_token.end;
     enum cushion_statement_accumulator_push_flags_t flags = CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_NONE;
@@ -4196,8 +4189,8 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
     }
 
     LEX_WHEN_ERROR (return)
-    name_begin = GUARDRAIL_EXTRACT (name_begin);
-    name_end = GUARDRAIL_EXTRACT (name_end);
+    name_begin = GUARDRAIL_EXTRACT (statement_accumulator, name_begin);
+    name_end = GUARDRAIL_EXTRACT (statement_accumulator, name_end);
 
     struct cushion_statement_accumulator_t *accumulator =
         find_statement_accumulator (state->instance, name_begin, name_end);
@@ -4239,7 +4232,7 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
         }
     }
 
-    LIFT_USED_GUARDRAIL
+    GUARDRAIL_RELEASE (statement_accumulator);
     const char *saved_file =
         cushion_instance_copy_null_terminated_inside (state->instance, file, CUSHION_ALLOCATION_CLASS_PERSISTENT);
     struct cushion_token_list_item_t *content = lex_extension_injector_content (state, saved_file);

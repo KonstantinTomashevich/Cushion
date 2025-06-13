@@ -37,7 +37,14 @@ void cushion_tokenization_state_init_for_argument_string (struct cushion_tokeniz
     state->cursor = string;
     state->marker = string;
     state->token = string;
-    state->guardrail = NULL;
+
+#if defined(CUSHION_EXTENSIONS)
+    state->guardrail_defer = NULL;
+    state->guardrail_defer_base = NULL;
+
+    state->guardrail_statement_accumulator = NULL;
+    state->guardrail_statement_accumulator_base = NULL;
+#endif
 
     state->cursor_line = 1u;
     state->cursor_column = 1u;
@@ -68,7 +75,14 @@ void cushion_tokenization_state_init_for_file (struct cushion_tokenization_state
     state->marker = state->input_buffer + CUSHION_INPUT_BUFFER_SIZE - 1u;
     state->token = state->input_buffer + CUSHION_INPUT_BUFFER_SIZE - 1u;
     *state->limit = '\0';
-    state->guardrail = NULL;
+
+#if defined(CUSHION_EXTENSIONS)
+    state->guardrail_defer = NULL;
+    state->guardrail_defer_base = NULL;
+
+    state->guardrail_statement_accumulator = NULL;
+    state->guardrail_statement_accumulator_base = NULL;
+#endif
 
     state->cursor_line = 1u;
     state->cursor_column = 1u;
@@ -99,10 +113,21 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
         preserve_from = state->saved;
     }
 
-    if (state->guardrail && state->guardrail < preserve_from)
+#if defined(CUSHION_EXTENSIONS)
+    const char *guardrail_feature_name = NULL;
+
+    if (state->guardrail_defer && state->guardrail_defer < preserve_from)
     {
-        preserve_from = state->guardrail;
+        preserve_from = state->guardrail_defer;
+        guardrail_feature_name = "defer";
     }
+
+    if (state->guardrail_statement_accumulator && state->guardrail_statement_accumulator < preserve_from)
+    {
+        preserve_from = state->guardrail_statement_accumulator;
+        guardrail_feature_name = "statement accumulator";
+    }
+#endif
 
     const size_t shift = preserve_from - state->input_buffer;
     const size_t used = state->limit - state->token;
@@ -115,9 +140,19 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
             return CUSHION_INTERNAL_RESULT_FAILED;
         }
 
-        cushion_instance_tokenization_error (
-            instance, state, "Encountered lexeme overflow, %s.",
-            state->guardrail == preserve_from ? "guardrail is a culprit" : "guardrail was not used");
+#if defined(CUSHION_EXTENSIONS)
+        if (guardrail_feature_name)
+        {
+            cushion_instance_tokenization_error (instance, state,
+                                                 "Encountered lexeme overflow from guardrail for the %s feature.",
+                                                 guardrail_feature_name);
+        }
+        else
+#endif
+        {
+            cushion_instance_tokenization_error (instance, state, "Encountered lexeme overflow.");
+        }
+
         return CUSHION_INTERNAL_RESULT_FAILED;
     }
 
@@ -128,10 +163,17 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
     state->marker -= shift;
     state->token -= shift;
 
-    if (state->guardrail)
+#if defined(CUSHION_EXTENSIONS)
+    if (state->guardrail_defer)
     {
-        state->guardrail -= shift;
+        state->guardrail_defer -= shift;
     }
+
+    if (state->guardrail_statement_accumulator)
+    {
+        state->guardrail_statement_accumulator -= shift;
+    }
+#endif
 
     if (state->saved)
     {

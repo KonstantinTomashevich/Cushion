@@ -507,8 +507,15 @@ struct cushion_tokenization_state_t
     const char *marker;
     const char *token;
 
-    /// \brief If not NULL, prevents code after it from being lost during refill, the same way as token does.
-    const char *guardrail;
+#if defined(CUSHION_EXTENSIONS)
+    // Guardrails are used to prevent code after them from being lost during refill, the same way as token does.
+
+    const char *guardrail_defer;
+    const char *guardrail_defer_base;
+
+    const char *guardrail_statement_accumulator;
+    const char *guardrail_statement_accumulator_base;
+#endif
 
     unsigned int cursor_line;
     unsigned int cursor_column;
