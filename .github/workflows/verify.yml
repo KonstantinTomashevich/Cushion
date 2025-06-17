@@ -86,7 +86,9 @@ jobs:
 
       - name: Test
         working-directory: ${{env.BUILD_DIRECTORY}}
-        run: ctest --build-config ${{matrix.build_type}} --timeout 2
+        # We use bigger timeout because it seems like first tests on Windows take too much time due to some kind
+        # of bootstrap inside perl or inside something else.
+        run: ctest --build-config ${{matrix.build_type}} --timeout 10
 
       - name: Upload test results
         # We upload test results only on failure to avoid clogging everything with them.
