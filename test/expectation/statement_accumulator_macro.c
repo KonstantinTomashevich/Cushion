@@ -18,15 +18,7 @@ int w ;
 
     
 };
-
-
-
-
-
-
-
-
-
+#line 22 "source/statement_accumulator_macro.c"
 int function (void)
 {
     return 0;

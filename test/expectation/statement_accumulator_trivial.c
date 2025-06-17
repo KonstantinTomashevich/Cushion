@@ -13,8 +13,3 @@ struct data_t
 #line 3 "source/statement_accumulator_trivial.c"
 
 };
-
-
-
-
-

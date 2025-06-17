@@ -6,8 +6,6 @@
 
 int function_1 ();
 int function_2 ();
-
-
 #line 43 "our own rules here"
 
 #pragma something different

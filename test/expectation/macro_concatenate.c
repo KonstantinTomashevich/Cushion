@@ -10,6 +10,6 @@ int main (int argc, char **argv)
 
     int variable_EXISTENT_MACRO ;
 
-    int  tricky_tricky_replacement_should_work = 42 ;
+    int tricky_tricky_replacement_should_work = 42 ;
     return 0;
 }

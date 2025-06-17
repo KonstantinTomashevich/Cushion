@@ -1,11 +1,6 @@
 #line 1 "source/statement_accumulator_combine_files.c"
 #line 1 "source/statement_accumulator_combine_files.h"
 
-
-
-
-
-
 #line 2 "source/statement_accumulator_combine_files.c"
 
 struct data_t

@@ -11,10 +11,3 @@ struct data_t
 #line 3 "source/statement_accumulator_unique.c"
 
 };
-
-
-
-
-
-
-

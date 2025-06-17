@@ -3,7 +3,7 @@
 #line 15 "source/macro_trivial.c"
 int main ( int argc , char * * argv )
 {
-    printf ( "%s%s%s" ,  "Hello, world!\n" ,  "Hello, world!\n" ,  "Hello, world!\n" ) ;
+    printf ( "%s%s%s" , "Hello, world!\n" , "Hello, world!\n" , "Hello, world!\n" ) ;
     int x = 1 + 2 + 3 + 4 ;
     return 0 ;
 }

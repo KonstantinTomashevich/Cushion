@@ -289,11 +289,22 @@ struct cushion_output_buffer_node_t
     char data[CUSHION_OUTPUT_BUFFER_NODE_SIZE];
 };
 
+enum cushion_statement_accumulator_flags_t
+{
+    CUSHION_STATEMENT_ACCUMULATOR_FLAG_NONE = 0u,
+
+    /// \brief Indicates that context forbids return/break/continue/goto keywords inside accumulator content.
+    CUSHION_STATEMENT_ACCUMULATOR_FLAG_JUMP_FORBIDDEN = 1u << 0u,
+};
+
 struct cushion_statement_accumulator_t
 {
     struct cushion_statement_accumulator_t *next;
+    enum cushion_statement_accumulator_flags_t flags;
+
     const char *name;
     unsigned int name_length;
+
     struct cushion_statement_accumulator_entry_t *entries_first;
     struct cushion_statement_accumulator_entry_t *entries_last;
     struct cushion_deferred_output_node_t *output_node;
@@ -626,15 +637,14 @@ enum cushion_identifier_kind_t
     CUSHION_IDENTIFIER_KIND_FOR,
     CUSHION_IDENTIFIER_KIND_WHILE,
     CUSHION_IDENTIFIER_KIND_DO,
+    CUSHION_IDENTIFIER_KIND_SWITCH,
 
     CUSHION_IDENTIFIER_KIND_RETURN,
     CUSHION_IDENTIFIER_KIND_BREAK,
     CUSHION_IDENTIFIER_KIND_CONTINUE,
-
-    // TODO: Not sure what to do with goto for defer feature.
-    //       It is rather difficult to properly generate defer when goto is used, especially when label is not yet
-    //       declared. But it might be an interesting though experiment: thinking how it could be implemented.
     CUSHION_IDENTIFIER_KIND_GOTO,
+
+    CUSHION_IDENTIFIER_KIND_DEFAULT,
 };
 
 enum cushion_punctuator_kind_t
@@ -809,16 +819,16 @@ struct cushion_lexer_file_state_t
     unsigned int stack_exit_line;
 
     const char *last_marked_file;
-
-    /// \details Reminder about whether to use last_marked_line or cursor_line from tokenization for start line:
-    ///          last_marked_line must be used everywhere where inspected token might come from macro replacement,
-    ///          as it would properly point to current line in macro context.
-    ///          cursor_line must be used for preprocessor directives and things that should never come from macro
-    ///          replacement lists, because for directives last_marked_line is not updated unless directives are
-    ///          preserved in output code.
     unsigned int last_marked_line;
 
+    /// \brief Saved here for ease of use.
+    unsigned int last_token_line;
+
     struct lexer_conditional_inclusion_node_t *conditional_inclusion_node;
+
+#if defined(CUSHION_EXTENSIONS)
+    struct lex_defer_feature_state_t *defer_feature;
+#endif
 
     /// \brief File name in lexer always points to the actual file using absolute path.
     char file_name[CUSHION_PATH_MAX];

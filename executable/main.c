@@ -25,7 +25,7 @@ static const char help_message[] =
     "To specify what arguments mean, argument switches are used:\n"
     "\n"
     "    --features         Any argument after this one is feature request. Supported:\n"
-    "                           defer-block              Support for defer blocks extension.\n"
+    "                           defer                    Support for defer blocks extension.\n"
     "                           wrapper-macro            Support for wrapper macros extension.\n"
     "                           statement-accumulator    Support for statement accumulator extension.\n"
     "\n"
@@ -120,7 +120,7 @@ int main (int argc, char **argv)
             return -1;
 
         case ARGUMENT_MODE_FEATURES:
-            if (strcmp (argument, "defer-block") == 0)
+            if (strcmp (argument, "defer") == 0)
             {
                 cushion_context_configure_feature (context, CUSHION_FEATURE_DEFER, 1u);
             }

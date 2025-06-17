@@ -16,6 +16,3 @@ struct data_t
 #line 6 "source/statement_accumulator_unordered.c"
 
 };
-
-
-

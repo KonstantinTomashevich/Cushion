@@ -8,7 +8,7 @@
 #line 16 "source/macro_preserve.c"
 ENTRY_FUNCTION
 {
-    printf ( "%s%s%s" ,  "Hello, world!\n" ,  "Hello, world!\n" ,  "Hello, world!\n" ) ;
+    printf ( "%s%s%s" , "Hello, world!\n" , "Hello, world!\n" , "Hello, world!\n" ) ;
     int x = 1 + 2 + 3 + 4 ;
     EXIT (0);
 }

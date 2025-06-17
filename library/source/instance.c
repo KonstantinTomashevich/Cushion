@@ -436,7 +436,7 @@ struct cushion_deferred_output_node_t *cushion_output_add_deferred_sink (struct 
 
 void cushion_output_select_sink (struct cushion_instance_t *instance, struct cushion_deferred_output_node_t *sink)
 {
-    assert (sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED);
+    assert (!sink || sink->flags & CUSHION_DEFERRED_OUTPUT_NODE_FLAG_UNFINISHED);
     instance->deferred_output_selected = sink;
 }
 
@@ -491,6 +491,10 @@ void cushion_output_finish_sink (struct cushion_instance_t *instance, struct cus
         }
 
         instance->deferred_output_first = current;
+        if (!current)
+        {
+            instance->deferred_output_last = NULL;
+        }
     }
 }
 
