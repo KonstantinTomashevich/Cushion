@@ -1,0 +1,101 @@
+# Verify workflow checks that everything can be built and tested without errors.
+name: verify
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        include:
+          - preset: development_ninja_gcc_debug
+            os: ubuntu-24.04
+            build_type: Debug
+          - preset: development_ninja_gcc_release
+            os: ubuntu-24.04
+            build_type: Release
+          - preset: development_ninja_gcc_x32_debug
+            os: ubuntu-24.04
+            build_type: Debug
+          - preset: development_ninja_gcc_x32_release
+            os: ubuntu-24.04
+            build_type: Release
+          - preset: development_ninja_clang_debug
+            os: ubuntu-24.04
+            build_type: Debug
+          - preset: development_ninja_clang_release
+            os: ubuntu-24.04
+            build_type: Release
+          - preset: development_visual_studio_msvc_debug
+            os: windows-2022
+            build_type: Debug
+          - preset: development_visual_studio_msvc_release
+            os: windows-2022
+            build_type: Release
+          - preset: development_visual_studio_clang_cl_debug
+            os: windows-2022
+            build_type: Debug
+          - preset: development_visual_studio_clang_cl_release
+            os: windows-2022
+            build_type: Release
+          - preset: no_extensions_check_ninja_clang_debug
+            os: ubuntu-24.04
+            build_type: Debug
+          - preset: no_extensions_check_ninja_clang_release
+            os: ubuntu-24.04
+            build_type: Release
+
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      BUILD_DIRECTORY: ${{github.workspace}}/build
+
+    runs-on: ${{matrix.os}}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install required libraries (Ubuntu)
+        if: matrix.os == 'ubuntu-24.04'
+        run: sudo apt-get update && sudo apt-get install ninja-build gcc-multilib g++-multilib re2c
+        
+      - name: Install required libraries (Windows)
+        if: matrix.os == 'windows-2022'
+        run: choco install re2c
+
+      - name: Configure
+        run: cmake --preset ${{matrix.preset}} -B ${{env.BUILD_DIRECTORY}}
+
+      - name: Check format
+        working-directory: ${{env.BUILD_DIRECTORY}}
+        run: cmake --build . --target cushion_format_check --config ${{matrix.build_type}}
+
+      - name: Build
+        working-directory: ${{env.BUILD_DIRECTORY}}
+        run: cmake --build . --target cushion --config ${{matrix.build_type}} --parallel 4
+
+      - name: Test
+        working-directory: ${{env.BUILD_DIRECTORY}}
+        # We use bigger timeout because it seems like first tests on Windows take too much time due to some kind
+        # of bootstrap inside perl or inside something else.
+        run: ctest --build-config ${{matrix.build_type}} --timeout 10
+
+      - name: Upload test results
+        # We upload test results only on failure to avoid clogging everything with them.
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test_results_${{matrix.preset}}
+          path: |
+            ${{env.BUILD_DIRECTORY}}/Testing/Temporary
+            ${{env.BUILD_DIRECTORY}}/test/test_results
