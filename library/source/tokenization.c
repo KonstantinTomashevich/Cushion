@@ -204,7 +204,8 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
 #endif
 
     // Fill free space at the end of buffer with new data from file.
-    unsigned long read = fread (state->limit, 1u, CUSHION_INPUT_BUFFER_SIZE - used - 1u, state->input_file_optional);
+    unsigned long read =
+        (unsigned long) fread (state->limit, 1u, CUSHION_INPUT_BUFFER_SIZE - used - 1u, state->input_file_optional);
 
     if (read == 0u)
     {
@@ -281,7 +282,7 @@ static inline void re2c_restore_saved_cursor (struct cushion_tokenization_state_
  re2c:eof = 0;
  re2c:tags = 1;
  re2c:flags:utf-8 = 1;
- re2c:flags:case-ranges = 1;
+ re2c:flags:case-ranges = 0;
  re2c:tags:expression = "state->tags->@@";
  */
 
@@ -372,7 +373,16 @@ static enum cushion_internal_result_t tokenize_decimal_value (const char *begin,
         unsigned long long result_before = result;
         switch (*begin)
         {
-        case '0' ... '9':
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
             result = result * 10u + (*begin - '0');
             break;
 
@@ -403,7 +413,14 @@ static enum cushion_internal_result_t tokenize_octal_value (const char *begin,
         unsigned long long result_before = result;
         switch (*begin)
         {
-        case '0' ... '7':
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
             result = result * 8u + (*begin - '0');
             break;
 
@@ -434,15 +451,34 @@ static enum cushion_internal_result_t tokenize_hex_value (const char *begin,
         unsigned long long result_before = result;
         switch (*begin)
         {
-        case '0' ... '9':
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
             result = result * 16u + (*begin - '0');
             break;
 
-        case 'A' ... 'F':
+        case 'A':
+        case 'B':
+        case 'C':
+        case 'D':
+        case 'E':
+        case 'F':
             result = result * 16u + (*begin - 'A');
             break;
 
-        case 'a' ... 'f':
+        case 'a':
+        case 'b':
+        case 'c':
+        case 'd':
+        case 'e':
+        case 'f':
             result = result * 16u + (*begin - 'a');
             break;
 
@@ -473,7 +509,8 @@ static enum cushion_internal_result_t tokenize_binary_value (const char *begin,
         unsigned long long result_before = result;
         switch (*begin)
         {
-        case '0' ... '1':
+        case '0':
+        case '1':
             result = result * 2u + (*begin - '0');
             break;
 

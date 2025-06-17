@@ -428,7 +428,7 @@ void cushion_instance_output_sequence (struct cushion_instance_t *instance, cons
 
 static inline void cushion_instance_output_null_terminated (struct cushion_instance_t *instance, const char *string)
 {
-    return cushion_instance_output_sequence (instance, string, string + strlen (string));
+    cushion_instance_output_sequence (instance, string, string + strlen (string));
 }
 
 static inline void cushion_instance_output_formatted (struct cushion_instance_t *instance, const char *format, ...)

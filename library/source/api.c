@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "internal.h"
 
 cushion_context_t cushion_context_create (void)

@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "internal.h"
 
 enum lexer_token_stack_item_flags_t
@@ -502,13 +504,13 @@ static unsigned int lex_calculate_stringized_internal_size (struct cushion_token
         case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
         case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
         case CUSHION_TOKEN_TYPE_OTHER:
-            size += token->token.end - token->token.begin;
+            size += (unsigned int) (token->token.end - token->token.begin);
             break;
 
         case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
         case CUSHION_TOKEN_TYPE_STRING_LITERAL:
         {
-            size += token->token.end - token->token.begin;
+            size += (unsigned int) (token->token.end - token->token.begin);
             if (token->token.type == CUSHION_TOKEN_TYPE_STRING_LITERAL)
             {
                 size += 2u; // Two more character for escaping double quotes.
@@ -1262,9 +1264,10 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
 #undef CHECK_APPENDED_TOKEN_TYPE
 
                     unsigned int base_identifier_length =
-                        context.result.last->token.end - context.result.last->token.begin;
+                        (unsigned int) (context.result.last->token.end - context.result.last->token.begin);
+
                     unsigned int append_identifier_length =
-                        context.sub_list.first->token.end - context.sub_list.first->token.begin;
+                        (unsigned int) (context.sub_list.first->token.end - context.sub_list.first->token.begin);
 
                     char *new_token_data = cushion_allocator_allocate (
                         &state->instance->allocator, base_identifier_length + append_identifier_length + 1u,
@@ -1624,7 +1627,13 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
     if (macro->flags & CUSHION_MACRO_FLAG_FUNCTION)
     {
         // Scan for the opening parenthesis.
-        struct cushion_token_t current_token;
+        // Initialize current token with default values so warnings checks do not trigger on it.
+        struct cushion_token_t current_token = {
+            .type = CUSHION_TOKEN_TYPE_NEW_LINE,
+            .begin = "\n",
+        };
+
+        current_token.end = current_token.begin + 1u;
         struct lexer_pop_token_meta_t current_token_meta;
 
         struct cushion_token_list_item_t *argument_tokens_first = NULL;
@@ -1834,7 +1843,13 @@ static struct cushion_token_list_item_t *lex_replace_identifier_if_macro (
         assert (context != LEX_REPLACE_IDENTIFIER_IF_MACRO_CONTEXT_EVALUATION);
 
         // Scan for opening brace.
-        struct cushion_token_t current_token;
+        // Initialize current token with default values so warnings checks do not trigger on it.
+        struct cushion_token_t current_token = {
+            .type = CUSHION_TOKEN_TYPE_NEW_LINE,
+            .begin = "\n",
+        };
+
+        current_token.end = current_token.begin + 1u;
         struct lexer_pop_token_meta_t current_token_meta;
         unsigned int skipping_until_significant = 1u;
 
@@ -2014,8 +2029,6 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         cushion_instance_lexer_error (state, meta, "Expected identifier for defined check.");
         return 0u;
     }
-
-    return 0u;
 }
 
 static long long lex_preprocessor_evaluate_defined (struct cushion_lexer_file_state_t *state)
@@ -2159,10 +2172,6 @@ static long long lex_preprocessor_evaluate_argument (struct cushion_lexer_file_s
                     "Encountered unexpected punctuator while evaluating preprocessor conditional expression.");
                 return 0;
             }
-
-            // Should never happen unless memory is corrupted.
-            assert (0);
-            return 0;
 
         case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
             if (current_token.unsigned_number_value > LLONG_MAX)
@@ -4542,7 +4551,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
         }
 
         struct lex_defer_label_t *label = state->defer_feature->labels_first;
-        const unsigned int length = current_token->end - current_token->begin;
+        const unsigned int length = (unsigned int) (current_token->end - current_token->begin);
 
         while (label)
         {
@@ -4566,7 +4575,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
 
             unresolved->label_name = cushion_instance_copy_char_sequence_inside (
                 state->instance, current_token->begin, current_token->end, CUSHION_ALLOCATION_CLASS_TRANSIENT);
-            unresolved->label_name_length = current_token->end - current_token->begin;
+            unresolved->label_name_length = (unsigned int) (current_token->end - current_token->begin);
 
             unresolved->from_block = state->defer_feature->current_block;
             unresolved->defer_output_node =
@@ -4622,8 +4631,9 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
             label->name = cushion_instance_copy_char_sequence_inside (
                 state->instance, state->defer_feature->expected_label_name_begin,
                 state->defer_feature->expected_label_name_end, CUSHION_ALLOCATION_CLASS_TRANSIENT);
-            label->name_length =
-                state->defer_feature->expected_label_name_end - state->defer_feature->expected_label_name_begin;
+
+            label->name_length = (unsigned int) (state->defer_feature->expected_label_name_end -
+                                                 state->defer_feature->expected_label_name_begin);
 
             label->next = state->defer_feature->labels_first;
             state->defer_feature->labels_first = label;
@@ -4989,7 +4999,7 @@ static struct cushion_statement_accumulator_t *find_statement_accumulator (struc
                                                                            const char *begin,
                                                                            const char *end)
 {
-    const unsigned int length = end - begin;
+    const unsigned int length = (unsigned int) (end - begin);
     struct cushion_statement_accumulator_t *accumulator = instance->statement_accumulators_first;
 
     while (accumulator)
@@ -5009,7 +5019,7 @@ static struct cushion_statement_accumulator_ref_t *find_statement_accumulator_re
                                                                                    const char *begin,
                                                                                    const char *end)
 {
-    const unsigned int length = end - begin;
+    const unsigned int length = (unsigned int) (end - begin);
     struct cushion_statement_accumulator_ref_t *ref = instance->statement_accumulator_refs_first;
 
     while (ref)
@@ -5165,7 +5175,7 @@ static void lex_code_statement_accumulator (struct cushion_lexer_file_state_t *s
     accumulator->flags = CUSHION_STATEMENT_ACCUMULATOR_FLAG_NONE;
     accumulator->name = cushion_instance_copy_char_sequence_inside (
         state->instance, current_token.begin, current_token.end, CUSHION_ALLOCATION_CLASS_PERSISTENT);
-    accumulator->name_length = current_token.end - current_token.begin;
+    accumulator->name_length = (unsigned int) (current_token.end - current_token.begin);
 
     accumulator->entries_first = NULL;
     accumulator->entries_last = NULL;
@@ -5276,7 +5286,7 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
             return;
         }
 
-        const unsigned int length = current_token.end - current_token.begin;
+        const unsigned int length = (unsigned int) (current_token.end - current_token.begin);
 
 #    define CHECK_FLAG(LITERAL, VALUE)                                                                                 \
         if (length == sizeof (LITERAL) - 1u && strncmp (current_token.begin, LITERAL, length) == 0)                    \
@@ -5335,7 +5345,7 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
             // Only makes sense to save name if there is no accumulator in sight and push is unordered.
             saved_accumulator_name = cushion_instance_copy_char_sequence_inside (state->instance, name_begin, name_end,
                                                                                  CUSHION_ALLOCATION_CLASS_PERSISTENT);
-            saved_accumulator_name_length = name_end - name_begin;
+            saved_accumulator_name_length = (unsigned int) (name_end - name_begin);
         }
         else if ((flags & CUSHION_STATEMENT_ACCUMULATOR_PUSH_FLAG_OPTIONAL) == 0u)
         {
@@ -5437,7 +5447,7 @@ static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_
         return;
     }
 
-    const unsigned int length = current_token.end - current_token.begin;
+    const unsigned int length = (unsigned int) (current_token.end - current_token.begin);
     struct cushion_statement_accumulator_ref_t *ref = state->instance->statement_accumulator_refs_first;
 
     while (ref)
@@ -5458,7 +5468,7 @@ static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_
 
         ref->name = cushion_instance_copy_char_sequence_inside (state->instance, current_token.begin, current_token.end,
                                                                 CUSHION_ALLOCATION_CLASS_PERSISTENT);
-        ref->name_length = current_token.end - current_token.begin;
+        ref->name_length = (unsigned int) (current_token.end - current_token.begin);
         ref->accumulator = NULL;
 
         ref->next = state->instance->statement_accumulator_refs_first;
@@ -5534,7 +5544,7 @@ static void lex_code_statement_accumulator_unref (struct cushion_lexer_file_stat
         return;
     }
 
-    const unsigned int length = current_token.end - current_token.begin;
+    const unsigned int length = (unsigned int) (current_token.end - current_token.begin);
     struct cushion_statement_accumulator_ref_t *ref = state->instance->statement_accumulator_refs_first;
     struct cushion_statement_accumulator_ref_t *ref_previous = NULL;
 
@@ -5903,7 +5913,7 @@ static void make_lex_state_path_writeable_to_literal (struct cushion_lexer_file_
         if (*input == '\\')
         {
             // Skip additional "\" if it exists.
-            if (*input == '\\')
+            if (*(input + 1u) == '\\')
             {
                 ++input;
             }
