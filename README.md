@@ -108,10 +108,10 @@ command would result in errors.
 ### Defer blocks
 
 `CUSHION_DEFER { ... your code ... }` makes it possible to write blocks of code that are executed on scope exit through
-natural means: `return`, `break`, `continue` or just scope end. It also makes sure that `return` value is calculated
-before executing defers and all defers are executed in reverse order. That makes RAII possible (which is a very cool 
-feature of C++) and greatly simplifies handling of locks and internal data with lifecycle inside function. Also, this 
-feature can be used inside regular macros, making something like 
+natural means: `return`, `break`, `continue`, `goto` or just scope end. It also makes sure that `return` value is 
+calculated before executing defers and all defers are executed in reverse order. That makes RAII possible (which is a 
+very cool feature of C++) and greatly simplifies handling of locks and internal data with lifecycle inside function.
+Also, this feature can be used inside regular macros, making something like 
 `#define LOCK_GUARD(LOCK) do_lock (LOCK); CUSHION_DEFER { do_unlock (LOCK); }` possible.
 
 ### Wrapper macros
