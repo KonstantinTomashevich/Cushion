@@ -3,8 +3,9 @@
 Cushion is a **partial** C preprocessor for softening the code before passing it to custom code generation software.
 
 > **Warning:**
-> Cushion is still in early development and this readme mostly describes intentions and plans, 
-> not actual implementation as of now, unfortunately.
+> Cushion is still in early development and not test on a big enough project.
+> We plan to test it on [Kan project](https://github.com/KonstantinTomashevich/Kan) first and it might result in lots 
+> of changes if something is wrong in current implementation.
 
 > **Warning:**
 > Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
