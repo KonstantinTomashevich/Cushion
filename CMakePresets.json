@@ -14,7 +14,7 @@
     },
     {
       "name": "development",
-      "description": "Base mixin for development builds.",
+      "description": "Base mixin for development builds with extensions enabled.",
       "inherits": [
         "base"
       ],
@@ -26,31 +26,16 @@
       }
     },
     {
-      "name": "artifact_clean",
-      "description": "Base mixin for artifact builds without extensions.",
+      "name": "no_extensions_check",
+      "description": "Base mixin for development builds with extensions enabled.",
       "inherits": [
         "base"
       ],
       "hidden": true,
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CUSHION_TEST": "OFF",
+        "CUSHION_TEST": "ON",
         "CUSHION_EXTENSIONS": "OFF",
-        "CUSHION_WARNINGS_AS_ERRORS": "OFF"
-      }
-    },
-    {
-      "name": "artifact_extended",
-      "description": "Base mixin for artifact builds with extensions.",
-      "inherits": [
-        "base"
-      ],
-      "hidden": true,
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CUSHION_TEST": "OFF",
-        "CUSHION_EXTENSIONS": "ON",
-        "CUSHION_WARNINGS_AS_ERRORS": "OFF"
+        "CUSHION_WARNINGS_AS_ERRORS": "ON"
       }
     },
     {
@@ -353,10 +338,26 @@
       }
     },
     {
-      "name": "artifact_clean_linux",
-      "description": "Profile for building artifact clean version for linux.",
+      "name": "no_extensions_check_ninja_clang_debug",
+      "description": "Profile for checking build without extensions on ninja with clang.",
       "inherits": [
-        "artifact_clean",
+        "no_extensions_check",
+        "ninja_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "no_extensions_check_ninja_clang_release",
+      "description": "Profile for checking build without extensions on ninja with clang.",
+      "inherits": [
+        "no_extensions_check",
         "ninja_clang"
       ],
       "cacheVariables": {
@@ -366,54 +367,6 @@
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
-      }
-    },
-    {
-      "name": "artifact_extended_linux",
-      "description": "Profile for building artifact extended version for linux.",
-      "inherits": [
-        "artifact_extended",
-        "ninja_clang"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      }
-    },
-    {
-      "name": "artifact_clean_windows",
-      "description": "Profile for building artifact clean version for windows.",
-      "inherits": [
-        "artifact_clean",
-        "visual_studio_clang_cl"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      }
-    },
-    {
-      "name": "artifact_extended_windows",
-      "description": "Profile for building artifact extended version for windows.",
-      "inherits": [
-        "artifact_extended",
-        "visual_studio_clang_cl"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
       }
     }
   ]
