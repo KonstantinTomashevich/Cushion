@@ -86,7 +86,7 @@ jobs:
 
       - name: Test
         working-directory: ${{env.BUILD_DIRECTORY}}
-        run: ctest --build-config ${{matrix.build_type}} --parallel 4 --timeout 2
+        run: ctest --build-config ${{matrix.build_type}} --timeout 2
 
       - name: Upload test results
         # We upload test results only on failure to avoid clogging everything with them.
