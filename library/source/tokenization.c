@@ -130,7 +130,7 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
 #endif
 
     const size_t shift = preserve_from - state->input_buffer;
-    const size_t used = state->limit - state->token;
+    const size_t used = state->limit - preserve_from;
 
     if (shift == 0u)
     {
@@ -157,7 +157,7 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
     }
 
     // Shift buffer contents (discard everything up to the current token).
-    memmove (state->input_buffer, state->token, used);
+    memmove (state->input_buffer, preserve_from, used);
     state->limit -= shift;
     state->cursor -= shift;
     state->marker -= shift;
@@ -327,6 +327,7 @@ struct cushion_token_list_item_t *cushion_save_token_to_memory (struct cushion_i
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
     case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
+    case CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE:
     case CUSHION_TOKEN_TYPE_NEW_LINE:
     case CUSHION_TOKEN_TYPE_GLUE:
     case CUSHION_TOKEN_TYPE_COMMENT:
@@ -733,12 +734,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         decimal_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught decimal integer with unknown suffix.");
-             return;
-         }
-
          octal_integer integer_suffix?
          {
              if (tokenize_octal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
@@ -749,12 +744,6 @@ start_next_token:
              }
 
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
-         }
-
-         octal_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught octal integer with unknown suffix.");
-             return;
          }
 
          hex_integer integer_suffix?
@@ -769,12 +758,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         hex_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught hex integer with unknown suffix.");
-             return;
-         }
-
          binary_integer integer_suffix?
          {
              if (tokenize_binary_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
@@ -787,12 +770,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         binary_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught binary integer with unknown suffix.");
-             return;
-         }
-
          digit_sequence = [0-9] [0-9']*;
          hex_digit_sequence = [0-9a-fA-F] [0-9a-fA-F']*;
          real_floating_suffix = [fF] | [lL] | "df" | "dd" | "dl" | "DF" | "DD" | "DL";
@@ -802,7 +779,7 @@ start_next_token:
              (complex_floating_suffix real_floating_suffix?);
 
          // Decimal floating literal.
-         (digit_sequence? "." digit_sequence) | (digit_sequence ".") ([eE]? "-"? digit_sequence)? floating_suffix?
+         ((digit_sequence? "." digit_sequence) | (digit_sequence "."?)) ([eE] "-"? digit_sequence)? floating_suffix?
          {
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_FLOATING);
          }
@@ -813,8 +790,13 @@ start_next_token:
          {
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_FLOATING);
          }
+         
+         [0-9] identifier
+         {
+             PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE);
+         }
 
-         simple_escape_sequence = "\\" ['"?\\abfnrtv];
+         simple_escape_sequence = "\\" (['"?\\abfnrtv] | ([0-9]+));
          // For now, we only support simple escape sequences, but that might be changed in the future.
          escape_sequence = simple_escape_sequence;
          character_literal_sequence = (escape_sequence | [^'\\\n])*;

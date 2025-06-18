@@ -64,11 +64,8 @@ void *cushion_allocator_allocate (struct cushion_allocator_t *allocator,
             new_page->bottom_persistent = new_page->data + CUSHION_ALLOCATOR_PAGE_SIZE;
             allocator->current_page->next = new_page;
         }
-        else
-        {
-            allocator->current_page = allocator->current_page->next;
-        }
 
+        allocator->current_page = allocator->current_page->next;
         result = allocator_page_allocate (allocator->current_page, size, alignment, class);
     }
 

@@ -582,6 +582,10 @@ enum cushion_token_type_t
 
     CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
     CUSHION_TOKEN_TYPE_NUMBER_FLOATING,
+    
+    /// \details Identifier that starts from digit is not a valid token for the language, but a valid token for
+    ///          the preprocessor for macro arguments. Therefore we must support it for that case.
+    CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE,
 
     CUSHION_TOKEN_TYPE_CHARACTER_LITERAL,
     CUSHION_TOKEN_TYPE_STRING_LITERAL,
@@ -589,8 +593,8 @@ enum cushion_token_type_t
     CUSHION_TOKEN_TYPE_NEW_LINE,
 
     /// \brief Whitespaces as a glue.
-    /// \brief Glue is saved as token so lexer can handle it in output generation logic without relying on tokenizer
-    ///        to handle its output.
+    /// \details Glue is saved as token so lexer can handle it in output generation logic without relying on tokenizer
+    ///          to handle its output.
     CUSHION_TOKEN_TYPE_GLUE,
 
     /// \brief Actual comments.
