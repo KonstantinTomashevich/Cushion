@@ -26,6 +26,7 @@ enum cushion_feature_t
     CUSHION_FEATURE_DEFER = 0u,
     CUSHION_FEATURE_WRAPPER_MACRO,
     CUSHION_FEATURE_STATEMENT_ACCUMULATOR,
+    CUSHION_FEATURE_SNIPPET,
 };
 
 /// \details There is no option for keeping comments for several reasons:

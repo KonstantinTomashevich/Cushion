@@ -304,6 +304,30 @@ statement accumulators can only be resolved when preprocessing is finished, ther
 But it shouldn't be an issue in most cases as it is very unlikely that you'll need to preprocess gigabytes of code and
 even if you do, you'll have lots of other issues to solve already.
 
+### Snippets
+
+Snippet is a small object-like macro that can be created from inside another macro replacement list using 
+`CUSHION_SNIPPET`, similar to how `_Pragma` is unwrapped. Unlike macros, snippet redefinition is always allowed. 
+For example:
+
+```c
+#define BIND_ACCUMULATOR(ACCUMULATOR_NAME, CONTEXT_PATH)                                                               \
+ CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, ACCUMULATOR_NAME)                                    \
+ CUSHION_SNIPPET (DATABASE_CONTEXT_PATH, (CONTEXT_PATH))
+
+// Then DATABASE_CONTEXT_PATH could be used as macro, for example:
+// DATABASE_CONTEXT_PATH->query_field
+```
+
+Main reason for adding snippets is just a little syntax sugar. They're not as influential as other features, but can
+make usage of other features a little bit more convenient.
+
+First argument of the `CUSHION_SNIPPET` must always be an identifier -- snippet name. All arguments after that are
+treated as token array, close to how `__VA_ARGS__` are treated.
+
+> **Warning:**
+> Snippets are never preserved in the output.
+
 ## Limitations
 
 Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 

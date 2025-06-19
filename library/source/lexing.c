@@ -684,6 +684,7 @@ static enum cushion_identifier_kind_t lex_relculate_identifier_kind (const char 
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_PUSH", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_REF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_UNREF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF)
+    CHECK_KIND ("CUSHION_SNIPPET", CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET)
 
     CHECK_KIND ("__FILE__", CUSHION_IDENTIFIER_KIND_FILE)
     CHECK_KIND ("__LINE__", CUSHION_IDENTIFIER_KIND_LINE)
@@ -2070,6 +2071,7 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF:
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
+        case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
             cushion_instance_lexer_error (state, meta, "Encountered unsupported reserved identifier in defined check.");
             return 0u;
 
@@ -3459,8 +3461,8 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
             LEX_WHEN_ERROR (return)
         }
 
-        if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
-            current_token.punctuator_kind == CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
+        if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
+            current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
         {
             cushion_instance_lexer_error (state, &current_token_meta,
                                           "Expected \")\" or \",\" while reading macro parameter name list.");
@@ -3759,7 +3761,7 @@ static struct cushion_token_list_item_t *lex_extension_injector_content (struct 
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return NULL)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_CURLY_BRACE)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -3838,6 +3840,7 @@ static struct cushion_token_list_item_t *lex_extension_injector_content (struct 
             case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH:
             case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF:
             case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
                 cushion_instance_lexer_error (
                     state, &current_token_meta,
                     "Encountered cushion keywords in CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER code block, "
@@ -5219,7 +5222,7 @@ static void lex_code_statement_accumulator (struct cushion_lexer_file_state_t *s
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5287,7 +5290,7 @@ static void lex_code_statement_accumulator (struct cushion_lexer_file_state_t *s
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5305,7 +5308,7 @@ static void lex_code_statement_accumulator_push (struct cushion_lexer_file_state
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5511,7 +5514,7 @@ static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5560,7 +5563,7 @@ static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_COMMA)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5593,7 +5596,7 @@ static void lex_code_statement_accumulator_ref (struct cushion_lexer_file_state_
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5608,7 +5611,7 @@ static void lex_code_statement_accumulator_unref (struct cushion_lexer_file_stat
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
@@ -5662,13 +5665,180 @@ static void lex_code_statement_accumulator_unref (struct cushion_lexer_file_stat
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta,
                                       "Expected \")\" after CUSHION_STATEMENT_ACCUMULATOR_UNREF argument.");
         return;
     }
+}
+
+static void lex_code_snippet (struct cushion_lexer_file_state_t *state)
+{
+    struct cushion_token_t current_token;
+    struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    struct lexer_pop_token_meta_t first_token_meta = current_token_meta;
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta, "Expected \"(\" after CUSHION_SNIPPET.");
+        return;
+    }
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_IDENTIFIER ||
+        current_token.identifier_kind != CUSHION_IDENTIFIER_KIND_REGULAR)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected non-keyword identifier for CUSHION_SNIPPET as first argument.");
+        return;
+    }
+
+    struct cushion_macro_node_t *node =
+        cushion_allocator_allocate (&state->instance->allocator, sizeof (struct cushion_macro_node_t),
+                                    _Alignof (struct cushion_macro_node_t), CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    node->name = cushion_instance_copy_char_sequence_inside (state->instance, current_token.begin, current_token.end,
+                                                             CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+    node->flags = CUSHION_MACRO_FLAG_SNIPPET;
+    node->replacement_list_first = NULL;
+    node->parameters_first = NULL;
+
+    current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
+    LEX_WHEN_ERROR (return)
+
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
+        current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_COMMA)
+    {
+        cushion_instance_lexer_error (state, &current_token_meta,
+                                      "Expected \",\" after first argument for CUSHION_SNIPPET.");
+        return;
+    }
+
+    struct cushion_token_list_item_t *content_first = NULL;
+    struct cushion_token_list_item_t *content_last = NULL;
+    unsigned int parenthesis_left = 1u;
+
+    while (parenthesis_left > 0u && !cushion_instance_is_error_signaled (state->instance))
+    {
+        current_token_meta = lexer_file_state_pop_token (state, &current_token);
+        LEX_WHEN_ERROR (break)
+
+        switch (current_token.type)
+        {
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Encountered preprocessor directive while lexing snippet. Not supported.");
+            return;
+
+        case CUSHION_TOKEN_TYPE_IDENTIFIER:
+            switch (current_token.identifier_kind)
+            {
+            case CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE:
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Found __CUSHION_PRESERVE__ inside CUSHION_SNIPPET. Not supported.");
+                return;
+
+            case CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED:
+                cushion_instance_lexer_error (state, &current_token_meta,
+                                              "Found __CUSHION_WRAPPED__ inside CUSHION_SNIPPET. Not supported.");
+                return;
+
+            default:
+                goto append_token;
+                break;
+            }
+
+            break;
+
+        case CUSHION_TOKEN_TYPE_PUNCTUATOR:
+            switch (current_token.punctuator_kind)
+            {
+            case CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS:
+                ++parenthesis_left;
+                goto append_token;
+                break;
+
+            case CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS:
+                --parenthesis_left;
+
+                if (parenthesis_left > 0u)
+                {
+                    goto append_token;
+                }
+
+                break;
+
+            default:
+                goto append_token;
+                break;
+            }
+
+            break;
+
+        case CUSHION_TOKEN_TYPE_NUMBER_INTEGER:
+        case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
+        case CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE:
+        case CUSHION_TOKEN_TYPE_CHARACTER_LITERAL:
+        case CUSHION_TOKEN_TYPE_STRING_LITERAL:
+        case CUSHION_TOKEN_TYPE_OTHER:
+            goto append_token;
+            break;
+
+        case CUSHION_TOKEN_TYPE_NEW_LINE:
+        case CUSHION_TOKEN_TYPE_GLUE:
+        case CUSHION_TOKEN_TYPE_COMMENT:
+            // Glue and comments are ignored in replacement lists as replacements newer preserve formatting.
+            break;
+
+        case CUSHION_TOKEN_TYPE_END_OF_FILE:
+            cushion_instance_lexer_error (state, &current_token_meta,
+                                          "Encountered end of file while parsing CUSHION_SNIPPET.");
+            return;
+
+        append_token:
+        {
+            struct cushion_token_list_item_t *new_token_item =
+                cushion_save_token_to_memory (state->instance, &current_token, CUSHION_ALLOCATION_CLASS_PERSISTENT);
+
+            // We do not save file and line info in replacement lists as this is not how macros usually work.
+            if (content_last)
+            {
+                content_last->next = new_token_item;
+            }
+            else
+            {
+                content_first = new_token_item;
+            }
+
+            content_last = new_token_item;
+            break;
+        }
+        }
+    }
+
+    node->replacement_list_first = content_first;
+    cushion_instance_macro_add (state->instance, node, lex_error_context (state, &first_token_meta));
 }
 #endif
 
@@ -5752,7 +5922,7 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state,
     struct lexer_pop_token_meta_t current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_LEFT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta, "Expected \"(\" after _Pragma.");
@@ -5841,7 +6011,7 @@ static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state,
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
     LEX_WHEN_ERROR (return)
 
-    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR &&
+    if (current_token.type != CUSHION_TOKEN_TYPE_PUNCTUATOR ||
         current_token.punctuator_kind != CUSHION_PUNCTUATOR_KIND_RIGHT_PARENTHESIS)
     {
         cushion_instance_lexer_error (state, &current_token_meta, "Expected \")\" after _Pragma argument.");
@@ -5923,6 +6093,19 @@ static unsigned int lex_code_identifier_is_replaced (struct cushion_lexer_file_s
     case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
         CHECK_IF_STATEMENT_ACCUMULATOR_FEATURE_ENABLED
         lex_code_statement_accumulator_unref (state);
+        return 1u;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
+        if (cushion_instance_has_feature (state->instance, CUSHION_FEATURE_SNIPPET))
+        {
+            lex_code_snippet (state);
+        }
+        else
+        {
+            cushion_instance_lexer_error (state, current_token_meta,
+                                          "Encountered CUSHION_SNIPPET, but this feature is not enabled.");
+        }
+
         return 1u;
 #endif
 

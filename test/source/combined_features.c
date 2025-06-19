@@ -1,3 +1,7 @@
+#define BIND_DATABASE_CONTEXT(NAME, ...)                                                                               \
+    CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, NAME)                                             \
+    CUSHION_SNIPPET (DATABASE_CONTEXT_PATH, (__VA_ARGS__))
+
 #define DATABASE_QUERY(NAME, VALUE_TYPE, PARAMETER)                                                                    \
     {                                                                                                                  \
         CUSHION_STATEMENT_ACCUMULATOR_PUSH (database_context_accumulator, unique)                                      \
@@ -6,7 +10,7 @@
         }                                                                                                              \
                                                                                                                        \
         database_read_cursor_t cursor_##NAME =                                                                         \
-            database_query_execute_read (database_context->query_##VALUE_TYPE, PARAMETER);                             \
+            database_query_execute_read (DATABASE_CONTEXT_PATH->query_##VALUE_TYPE, PARAMETER);                        \
         CUSHION_DEFER { database_read_cursor_close (cursor_##NAME); }                                                  \
                                                                                                                        \
         while (1)                                                                                                      \
@@ -38,9 +42,9 @@ struct database_context_2_t
     CUSHION_STATEMENT_ACCUMULATOR (database_context_2)
 };
 
-CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, database_context_1)
+BIND_DATABASE_CONTEXT (database_context_1, database_context_ptr)
 
-void database_function_1_a (struct database_context_1_t *database_context)
+void database_function_1_a (struct database_context_1_t *database_context_ptr)
 {
     DATABASE_QUERY (q_1, value_type_a, 1)
     {
@@ -63,7 +67,7 @@ void database_function_1_a (struct database_context_1_t *database_context)
     return;
 }
 
-void database_function_1_b (struct database_context_1_t *database_context)
+void database_function_1_b (struct database_context_1_t *database_context_ptr)
 {
     DATABASE_QUERY (q_1, value_type_b, 1)
     {
@@ -84,9 +88,9 @@ void database_function_1_b (struct database_context_1_t *database_context)
     }
 }
 
-CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, database_context_2)
+BIND_DATABASE_CONTEXT (database_context_2, database_context_ref)
 
-void database_function_2 (struct database_context_2_t *database_context)
+void database_function_2 (struct database_context_2_t *database_context_ref)
 {
     DATABASE_QUERY (q_1, value_type_x, 10)
     {

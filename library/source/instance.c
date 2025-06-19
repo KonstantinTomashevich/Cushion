@@ -257,19 +257,39 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
 
     if (already_here)
     {
+#if defined(CUSHION_EXTENSIONS)
+        if ((already_here->flags & CUSHION_MACRO_FLAG_SNIPPET) && (node->flags & CUSHION_MACRO_FLAG_SNIPPET))
+        {
+            // Snippets are always replaceable.
+            goto replace_macro;
+        }
+        else if (already_here->flags & CUSHION_MACRO_FLAG_SNIPPET)
+        {
+            cushion_instance_execution_error (
+                instance, error_context, "Caught attempt to replace snippet macro \"%s\" with real macro.", node->name);
+            return;
+        }
+        else if (node->flags & CUSHION_MACRO_FLAG_SNIPPET)
+        {
+            cushion_instance_execution_error (instance, error_context,
+                                              "Caught attempt to replace normal macro \"%s\" with snippet macro.",
+                                              node->name);
+            return;
+        }
+#endif
+
         if (cushion_instance_has_option (instance, CUSHION_OPTION_FORBID_MACRO_REDEFINITION) &&
             (instance->state_flags & CUSHION_INSTANCE_STATE_FLAG_EXECUTION))
         {
             cushion_instance_execution_error (instance, error_context, "Encountered macro \"%s\" redefinition.",
                                               node->name);
-        }
-        else
-        {
-            // Just replace previous node content and exit.
-            already_here->value = node->value;
-            already_here->parameters_first = node->parameters_first;
+            return;
         }
 
+    replace_macro:
+        // Just replace previous node content and exit.
+        already_here->value = node->value;
+        already_here->parameters_first = node->parameters_first;
         return;
     }
 
