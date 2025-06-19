@@ -582,7 +582,7 @@ enum cushion_token_type_t
 
     CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
     CUSHION_TOKEN_TYPE_NUMBER_FLOATING,
-    
+
     /// \details Identifier that starts from digit is not a valid token for the language, but a valid token for
     ///          the preprocessor for macro arguments. Therefore we must support it for that case.
     CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE,

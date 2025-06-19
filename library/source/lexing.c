@@ -209,7 +209,7 @@ static inline void lexer_file_state_path_init (struct cushion_lexer_file_state_t
         state->path_buffer.size = 0u;
         return;
     }
-    
+
     const size_t in_size = strlen (data);
     if (in_size + 1u > CUSHION_PATH_BUFFER_SIZE)
     {
@@ -2765,7 +2765,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 }
 
                 new_item->left_value = new_argument;
-                new_item->operator= next_operator;
+                new_item->operator = next_operator;
                 new_item->precedence = operator_precedence;
                 new_item->associativity = operator_associativity;
 
@@ -3312,13 +3312,13 @@ static void lex_preprocessor_include (struct cushion_lexer_file_state_t *state)
             include_result = LEX_INCLUDE_RESULT_FULL;
         }
     }
-    
+
     // Try absolute include. It is a rare case, but may happen.
     if (include_result == LEX_INCLUDE_RESULT_NOT_FOUND)
     {
         lexer_file_state_path_init (state, NULL);
         LEX_WHEN_ERROR (return)
-        
+
         if (lex_preprocessor_try_include (state, &current_token, &current_token_meta, NULL))
         {
             include_result = LEX_INCLUDE_RESULT_FULL;

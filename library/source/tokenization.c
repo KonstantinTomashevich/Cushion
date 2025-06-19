@@ -790,7 +790,7 @@ start_next_token:
          {
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_FLOATING);
          }
-         
+
          [0-9] identifier
          {
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE);
