@@ -6,11 +6,11 @@
     {                                                                                                                  \
         CUSHION_STATEMENT_ACCUMULATOR_PUSH (database_context_accumulator, unique)                                      \
         {                                                                                                              \
-            database_query_t query_##VALUE_TYPE;                                                                       \
+            database_query_t query_##__CUSHION_EVALUATED_ARGUMENT__ (VALUE_TYPE);                                      \
         }                                                                                                              \
                                                                                                                        \
-        database_read_cursor_t cursor_##NAME =                                                                         \
-            database_query_execute_read (DATABASE_CONTEXT_PATH->query_##VALUE_TYPE, PARAMETER);                        \
+        database_read_cursor_t cursor_##NAME = database_query_execute_read (                                           \
+            DATABASE_CONTEXT_PATH->query_##__CUSHION_EVALUATED_ARGUMENT__ (VALUE_TYPE), PARAMETER);                    \
         CUSHION_DEFER { database_read_cursor_close (cursor_##NAME); }                                                  \
                                                                                                                        \
         while (1)                                                                                                      \
@@ -90,6 +90,8 @@ void database_function_1_b (struct database_context_1_t *database_context_ptr)
 
 BIND_DATABASE_CONTEXT (database_context_2, database_context_ref)
 
+#define GENERATED_TYPE(TYPE) prefix__##__CUSHION_EVALUATED_ARGUMENT__ (TYPE)##__suffix_t
+
 void database_function_2 (struct database_context_2_t *database_context_ref)
 {
     DATABASE_QUERY (q_1, value_type_x, 10)
@@ -103,6 +105,11 @@ void database_function_2 (struct database_context_2_t *database_context_ref)
     }
 
     DATABASE_QUERY (q_2, value_type_y, 20)
+    {
+        // Do what you need.
+    }
+
+    DATABASE_QUERY (q_3, GENERATED_TYPE (abc), 20)
     {
         // Do what you need.
     }

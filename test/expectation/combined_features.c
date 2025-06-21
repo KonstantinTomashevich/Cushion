@@ -15,10 +15,12 @@ database_query_t query_value_type_b ;
 struct database_context_2_t
 {
     
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 database_query_t query_value_type_x ;
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
 database_query_t query_value_type_y ;
+#line 112 "source/combined_features.c"
+database_query_t query_prefix__abc__suffix_t ;
 #line 42 "source/combined_features.c"
 
 };
@@ -153,9 +155,7 @@ database_read_cursor_close ( cursor_q_1 ) ;
 }
 #line 89 "source/combined_features.c"
 }
-
-
-
+#line 95 "source/combined_features.c"
 void database_function_2 (struct database_context_2_t *database_context_ref)
 {
     { database_read_cursor_t cursor_q_1 = database_query_execute_read ( ( database_context_ref ) -> query_value_type_x , 10 ) ; while ( 1 ) { database_read_access_t access_q_1 = database_read_cursor_resolve ( cursor_q_1 ) ; database_read_cursor_advance ( cursor_q_1 ) ; const struct value_type_x * q_1 = database_read_access_resolve ( access_q_1 ) ; if ( q_1 ) {
@@ -167,30 +167,45 @@ void database_function_2 (struct database_context_2_t *database_context_ref)
         int y = x + a + b;
         a = b = x = y;
     
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 database_read_access_close ( access_q_1 ) ;
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 } else { break ; } } 
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 database_read_cursor_close ( cursor_q_1 ) ;
-#line 95 "source/combined_features.c"
+#line 97 "source/combined_features.c"
 }
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
     { database_read_cursor_t cursor_q_2 = database_query_execute_read ( ( database_context_ref ) -> query_value_type_y , 20 ) ; while ( 1 ) { database_read_access_t access_q_2 = database_read_cursor_resolve ( cursor_q_2 ) ; database_read_cursor_advance ( cursor_q_2 ) ; const struct value_type_y * q_2 = database_read_access_resolve ( access_q_2 ) ; if ( q_2 ) {
 
         
     
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
 
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
 database_read_access_close ( access_q_2 ) ;
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
 } else { break ; } } 
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
 database_read_cursor_close ( cursor_q_2 ) ;
-#line 105 "source/combined_features.c"
+#line 107 "source/combined_features.c"
+}
+#line 112 "source/combined_features.c"
+    { database_read_cursor_t cursor_q_3 = database_query_execute_read ( ( database_context_ref ) -> query_prefix__abc__suffix_t , 20 ) ; while ( 1 ) { database_read_access_t access_q_3 = database_read_cursor_resolve ( cursor_q_3 ) ; database_read_cursor_advance ( cursor_q_3 ) ; const struct prefix__abc__suffix_t * q_3 = database_read_access_resolve ( access_q_3 ) ; if ( q_3 ) {
+
+        
+    
+#line 112 "source/combined_features.c"
+
+#line 112 "source/combined_features.c"
+database_read_access_close ( access_q_3 ) ;
+#line 112 "source/combined_features.c"
+} else { break ; } } 
+#line 112 "source/combined_features.c"
+database_read_cursor_close ( cursor_q_3 ) ;
+#line 112 "source/combined_features.c"
 }
 
 

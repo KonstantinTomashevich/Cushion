@@ -286,7 +286,10 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
             return;
         }
 
+#if defined(CUSHION_EXTENSIONS)
+        // Results in unused label error unless extensions are used.
     replace_macro:
+#endif
         // Just replace previous node content and exit.
         already_here->value = node->value;
         already_here->parameters_first = node->parameters_first;

@@ -328,6 +328,47 @@ treated as token array, close to how `__VA_ARGS__` are treated.
 > **Warning:**
 > Snippets are never preserved in the output.
 
+### Macro argument evaluation
+
+By standard, during macro replacement list evaluation argument tokens are unwrapped and `#`/`##` operations are applied 
+before any other macro evaluation takes place. While it is okay in most cases, it causes potentially unexpected behavior
+(from the user perspective) when macro call is passed as argument, but this argument participates in `#`/`##`.
+For example:
+
+```c
+#define GENERATED_CONTAINER_TYPE_NAME(TYPE) generated_container_##TYPE
+#define STRINGIZE_ME(...) #__VA_ARGS__
+
+// Then 
+STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
+// is replaced by
+"GENERATED_CONTAINER_TYPE_NAME (abc)"
+// by the standard.
+```
+
+But, in the above example, we might've wanted to get `"generated_container_abc"` string, as it would be more
+convenient for logging and might even be required for some kind of data output like json.
+
+To solve this issue, `__CUSHION_EVALUATED_ARGUMENT__` keyword inside macros is introduced. It evaluates all macro 
+replacements in given arguments including `__VA_ARGS__`. This keyword should be used the same way as function-like macro
+or `__VA_OPT__` and should always have only one argument -- macro argument name identifier, `__VA_ARGS__` or 
+`__VA_OPT__` expression. For example:
+
+```c
+#define GENERATED_CONTAINER_TYPE_NAME(TYPE) generated_container_##TYPE
+#define STRINGIZE_ME(...) #__CUSHION_EVALUATED_ARGUMENT__ (__VA_ARGS__)
+
+// Then 
+STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
+// is replaced by
+"generated_container_abc"
+// due to __CUSHION_EVALUATED_ARGUMENT__ usage.
+```
+
+> **Warning:**
+> Wrapper macros are not supported inside `__CUSHION_EVALUATED_ARGUMENT__` as they do not make any sense here: it is
+> counterintuitive to paste wrapper macro as argument, so there is no sense to support this case.
+
 ## Limitations
 
 Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 
