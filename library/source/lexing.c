@@ -2936,7 +2936,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 }
 
                 new_item->left_value = new_argument;
-                new_item->operator= next_operator;
+                new_item->operator = next_operator;
                 new_item->precedence = operator_precedence;
                 new_item->associativity = operator_associativity;
 
@@ -5814,22 +5814,19 @@ static void lex_code_statement_accumulator_unref (struct cushion_lexer_file_stat
         ref = ref->next;
     }
 
-    if (!ref)
+    // If ref is not found, it is technically not a mistake, it just means that someone tried to unbind reference
+    // that was not yet bound, which is not an error in itself, more of a "cleanup not needed" event.
+    if (ref)
     {
-        cushion_instance_lexer_error (
-            state, &current_token_meta,
-            "Unable to find statement accumulator reference for CUSHION_STATEMENT_ACCUMULATOR_UNREF.");
-        return;
-    }
-
-    // Just remove reference from the list.
-    if (ref_previous)
-    {
-        ref_previous->next = ref->next;
-    }
-    else
-    {
-        state->instance->statement_accumulator_refs_first = ref->next;
+        // Just remove reference from the list.
+        if (ref_previous)
+        {
+            ref_previous->next = ref->next;
+        }
+        else
+        {
+            state->instance->statement_accumulator_refs_first = ref->next;
+        }
     }
 
     current_token_meta = lex_skip_glue_comments_new_line (state, &current_token);
