@@ -2936,7 +2936,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 }
 
                 new_item->left_value = new_argument;
-                new_item->operator= next_operator;
+                new_item->operator = next_operator;
                 new_item->precedence = operator_precedence;
                 new_item->associativity = operator_associativity;
 
