@@ -2936,7 +2936,7 @@ static long long lex_preprocessor_evaluate (struct cushion_lexer_file_state_t *s
                 }
 
                 new_item->left_value = new_argument;
-                new_item->operator = next_operator;
+                new_item->operator= next_operator;
                 new_item->precedence = operator_precedence;
                 new_item->associativity = operator_associativity;
 
@@ -4285,12 +4285,28 @@ enum lex_defer_block_flags_t
     LEX_DEFER_BLOCK_FLAG_HAS_LABELS = 1u << 2u,
 };
 
+enum lex_defer_event_type_t
+{
+    LEX_DEFER_EVENT_TYPE_BLOCK = 0u,
+    LEX_DEFER_EVENT_TYPE_DEFER,
+};
+
 struct lex_defer_expression_t
 {
-    struct lex_defer_expression_t *next;
     const char *source_file;
     unsigned int source_line;
     struct cushion_token_list_item_t *content_first;
+};
+
+struct lex_defer_event_t
+{
+    struct lex_defer_event_t *next;
+    enum lex_defer_event_type_t type;
+    union
+    {
+        struct lex_defer_block_state_t *child_block;
+        struct lex_defer_expression_t defer;
+    };
 };
 
 struct lex_defer_block_state_t
@@ -4300,7 +4316,8 @@ struct lex_defer_block_state_t
     unsigned int depth;
 
     /// \details Defers are intentionally ordered as LIFO, because this is how RAII should work.
-    struct lex_defer_expression_t *defers_first;
+    ///          Therefore, all events are also ordered as LIFO.
+    struct lex_defer_event_t *events_first;
 };
 
 struct lex_defer_label_t
@@ -4322,6 +4339,7 @@ struct lex_defer_unresolved_goto_t
     unsigned int label_name_length;
 
     struct lex_defer_block_state_t *from_block;
+    struct lex_defer_event_t *from_block_since_event;
     struct cushion_deferred_output_node_t *defer_output_node;
 
     struct lexer_pop_token_meta_t name_meta;
@@ -4425,7 +4443,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_global (
             state->defer_feature->root_block.owner = NULL;
             state->defer_feature->root_block.flags = LEX_DEFER_BLOCK_FLAG_NONE;
             state->defer_feature->root_block.depth = 0u;
-            state->defer_feature->root_block.defers_first = NULL;
+            state->defer_feature->root_block.events_first = NULL;
 
             state->defer_feature->current_block = &state->defer_feature->root_block;
             state->defer_feature->labels_first = NULL;
@@ -4464,35 +4482,55 @@ static void lex_defer_generate_defers (struct cushion_lexer_file_state_t *state,
                                        const struct lexer_pop_token_meta_t *current_token_meta,
                                        struct lex_defer_block_state_t *up_to_block,
                                        struct lex_defer_block_state_t *from_block,
+                                       // When delayed resolution is used, new events might be added in from block,
+                                       // so we need this pointer to take care of it in that case.
+                                       struct lex_defer_event_t *since_event_in_from_block,
                                        enum lex_defer_statement_flags_t statement_flags_at_generation)
 {
     unsigned int any_defers = 0u;
     struct lex_defer_block_state_t *block = from_block;
+    struct lex_defer_block_state_t *since_child_block = NULL;
 
     while (block != up_to_block)
     {
         // Up to block should either be a parent or NULL, so we cannot end up with NULL block here.
         assert (block);
-        struct lex_defer_expression_t *defer = block->defers_first;
+        struct lex_defer_event_t *event = block == from_block ? since_event_in_from_block : block->events_first;
+        unsigned int child_block_encountered = since_child_block ? 0u : 1u;
 
-        while (defer)
+        while (event)
         {
-            if (defer->content_first)
+            switch (event->type)
             {
-                if (!any_defers && (statement_flags_at_generation & LEX_DEFER_STATEMENT_FLAG_LABELED))
+            case LEX_DEFER_EVENT_TYPE_BLOCK:
+                if (event->child_block == since_child_block)
                 {
-                    // If statement is labeled, put empty statement to prevent errors when declaration is labeled.
-                    cushion_instance_output_null_terminated (state->instance, ";");
+                    child_block_encountered = 1u;
                 }
 
-                any_defers = 1u;
-                output_extension_injector_content (state->instance, defer->content_first,
-                                                   OUTPUT_EXTENSION_INJECTOR_FLAGS_JUMP_FORBIDDEN);
+                break;
+
+            case LEX_DEFER_EVENT_TYPE_DEFER:
+                if (child_block_encountered && event->defer.content_first)
+                {
+                    if (!any_defers && (statement_flags_at_generation & LEX_DEFER_STATEMENT_FLAG_LABELED))
+                    {
+                        // If statement is labeled, put empty statement to prevent errors when declaration is labeled.
+                        cushion_instance_output_null_terminated (state->instance, ";");
+                    }
+
+                    any_defers = 1u;
+                    output_extension_injector_content (state->instance, event->defer.content_first,
+                                                       OUTPUT_EXTENSION_INJECTOR_FLAGS_JUMP_FORBIDDEN);
+                }
+
+                break;
             }
 
-            defer = defer->next;
+            event = event->next;
         }
 
+        since_child_block = block;
         block = block->owner;
     }
 
@@ -4598,6 +4636,7 @@ static void lex_defer_replay_return (struct cushion_lexer_file_state_t *state,
     }
 
     lex_defer_generate_defers (state, semicolon_meta, NULL, state->defer_feature->current_block,
+                               state->defer_feature->current_block->events_first,
                                state->defer_feature->statement_flags);
     if (non_void)
     {
@@ -4617,6 +4656,7 @@ static void lex_defer_replay_return (struct cushion_lexer_file_state_t *state,
 static void lex_defer_generate_goto_defers (struct cushion_lexer_file_state_t *state,
                                             struct lex_defer_label_t *to_label,
                                             struct lex_defer_block_state_t *from_block,
+                                            struct lex_defer_event_t *from_block_since_event,
                                             struct lexer_pop_token_meta_t *label_name_meta,
                                             enum lex_defer_statement_flags_t goto_statement_flags)
 {
@@ -4644,24 +4684,117 @@ static void lex_defer_generate_goto_defers (struct cushion_lexer_file_state_t *s
     struct lex_defer_block_state_t *merge_block = merge_block_target;
     // Should never be possible as root block will always be merge block in the worst case.
     assert (merge_block);
-    lex_defer_generate_defers (state, label_name_meta, merge_block, from_block, goto_statement_flags);
+    lex_defer_generate_defers (state, label_name_meta, merge_block, from_block, from_block_since_event,
+                               goto_statement_flags);
 
     // Check that goto will not result in defer execution without proper initialization.
     struct lex_defer_block_state_t *target_block = to_label->owner;
 
     while (target_block != merge_block)
     {
-        if (target_block->defers_first)
+        struct lex_defer_event_t *event = target_block->events_first;
+        while (event)
         {
-            cushion_instance_lexer_error (
-                state, label_name_meta,
-                "Defer feature forbids this goto jump, because jump from here to target location will add new defers "
-                "to the scope without calling initialization logic. It cannot be resolved on static analysis level "
-                "without additional runtime logic as static analysis cannot secure goto jump flow for every case.");
-            return;
+            if (event->type == LEX_DEFER_EVENT_TYPE_DEFER)
+            {
+                cushion_instance_execution_error (
+                    state->instance,
+                    (struct cushion_error_context_t) {
+                        .file = event->defer.source_file,
+                        .line = event->defer.source_line,
+                        .column = UINT_MAX,
+                    },
+                    "One of the defers that makes goto jump impossible, see error at the bottom.");
+            }
+
+            event = event->next;
         }
 
         target_block = target_block->owner;
+    }
+
+    // Check that there is no defers in merge block between jumps (otherwise uninitialized defers are introduced).
+
+    struct lex_defer_block_state_t *source_block_pre_merge;
+    if (from_block != merge_block)
+    {
+        source_block_pre_merge = from_block;
+        while (source_block_pre_merge->owner != merge_block)
+        {
+            source_block_pre_merge = source_block_pre_merge->owner;
+        }
+    }
+    else
+    {
+        source_block_pre_merge = NULL;
+    }
+
+    struct lex_defer_block_state_t *target_block_pre_merge;
+    if (to_label->owner != merge_block)
+    {
+        target_block_pre_merge = to_label->owner;
+        while (target_block_pre_merge->owner != merge_block)
+        {
+            target_block_pre_merge = target_block_pre_merge->owner;
+        }
+    }
+    else
+    {
+        target_block_pre_merge = NULL;
+    }
+
+    if (target_block_pre_merge && source_block_pre_merge)
+    {
+        unsigned int defers_in_merge_block_in_between_check_in_progress = 0u;
+        struct lex_defer_event_t *event = merge_block->events_first;
+
+        while (event)
+        {
+            switch (event->type)
+            {
+            case LEX_DEFER_EVENT_TYPE_BLOCK:
+                if (event->child_block == source_block_pre_merge)
+                {
+                    // Gone to the child block, nothing more to check.
+                    goto defers_in_merge_block_in_between_check_finished;
+                }
+                else if (event->child_block == target_block_pre_merge)
+                {
+                    defers_in_merge_block_in_between_check_in_progress = 1u;
+                }
+
+                break;
+
+            case LEX_DEFER_EVENT_TYPE_DEFER:
+                if (defers_in_merge_block_in_between_check_in_progress)
+                {
+                    cushion_instance_execution_error (
+                        state->instance,
+                        (struct cushion_error_context_t) {
+                            .file = event->defer.source_file,
+                            .line = event->defer.source_line,
+                            .column = UINT_MAX,
+                        },
+                        "One of the defers that makes goto jump impossible, see error at the bottom.");
+                }
+
+                break;
+            }
+
+            event = event->next;
+        }
+
+    defers_in_merge_block_in_between_check_finished:;
+    }
+
+    if (cushion_instance_is_error_signaled (state->instance))
+    {
+        cushion_instance_lexer_error (
+            state, label_name_meta,
+            "Defer feature forbids this goto jump, because jump from here to target location will add new "
+            "defers to the scope without calling initialization logic. It cannot be resolved on static "
+            "analysis level without additional runtime logic as static analysis cannot secure goto jump flow "
+            "for every case.");
     }
 }
 
@@ -4814,7 +4947,8 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
 
         if (label)
         {
-            lex_defer_generate_goto_defers (state, label, state->defer_feature->current_block, current_token_meta,
+            lex_defer_generate_goto_defers (state, label, state->defer_feature->current_block,
+                                            state->defer_feature->current_block->events_first, current_token_meta,
                                             state->defer_feature->statement_flags);
         }
         else
@@ -4828,6 +4962,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
             unresolved->label_name_length = (unsigned int) (current_token->end - current_token->begin);
 
             unresolved->from_block = state->defer_feature->current_block;
+            unresolved->from_block_since_event = state->defer_feature->current_block->events_first;
             unresolved->defer_output_node =
                 cushion_output_add_deferred_sink (state->instance, current_token_meta->file, current_token_meta->line);
 
@@ -4904,6 +5039,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
                 {
                     cushion_output_select_sink (state->instance, unresolved_goto->defer_output_node);
                     lex_defer_generate_goto_defers (state, label, unresolved_goto->from_block,
+                                                    unresolved_goto->from_block_since_event,
                                                     &unresolved_goto->name_meta, unresolved_goto->statement_flags);
 
                     cushion_output_select_sink (state->instance, NULL);
@@ -4997,15 +5133,22 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
 
             while (block)
             {
-                if (block->defers_first)
+                struct lex_defer_event_t *event = block->events_first;
+                while (event)
                 {
-                    any_defers = 1u;
-                    break;
+                    if (event->type == LEX_DEFER_EVENT_TYPE_DEFER)
+                    {
+                        any_defers = 1u;
+                        goto return_has_defers_check_finished;
+                    }
+
+                    event = event->next;
                 }
 
                 block = block->owner;
             }
 
+        return_has_defers_check_finished:
             if (!any_defers)
             {
                 // No defers, no need for return recording logic, can just mark jump and lex as regular statement.
@@ -5031,6 +5174,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
 
             LEX_WHEN_ERROR (return LEX_DEFER_PREPROCESS_RESULT_KEEP)
             lex_defer_generate_defers (state, current_token_meta, target_block, state->defer_feature->current_block,
+                                       state->defer_feature->current_block->events_first,
                                        state->defer_feature->statement_flags);
             break;
         }
@@ -5083,7 +5227,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
                 _Alignof (struct lex_defer_block_state_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
 
             new_block->flags = LEX_DEFER_BLOCK_FLAG_NONE;
-            new_block->defers_first = NULL;
+            new_block->events_first = NULL;
 
             if (state->defer_feature->statement_flags & (LEX_DEFER_STATEMENT_FLAG_FOR | LEX_DEFER_STATEMENT_FLAG_WHILE |
                                                          LEX_DEFER_STATEMENT_FLAG_DO | LEX_DEFER_STATEMENT_FLAG_SWITCH))
@@ -5098,6 +5242,15 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
 
             new_block->owner = state->defer_feature->current_block;
             new_block->depth = state->defer_feature->current_block->depth + 1u;
+
+            struct lex_defer_event_t *block_event =
+                cushion_allocator_allocate (&state->instance->allocator, sizeof (struct lex_defer_event_t),
+                                            _Alignof (struct lex_defer_event_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+            block_event->type = LEX_DEFER_EVENT_TYPE_BLOCK;
+            block_event->child_block = new_block;
+            block_event->next = state->defer_feature->current_block->events_first;
+            state->defer_feature->current_block->events_first = block_event;
 
             state->defer_feature->current_block = new_block;
             lex_defer_fresh_statement (state->defer_feature);
@@ -5116,6 +5269,7 @@ static enum lex_defer_preprocess_result_t lex_defer_preprocess_maybe_function (
             if ((state->defer_feature->statement_flags & LEX_DEFER_STATEMENT_FLAG_PREVIOUS_IS_JUMP) == 0u)
             {
                 lex_defer_generate_defers (state, current_token_meta, owner_block, state->defer_feature->current_block,
+                                           state->defer_feature->current_block->events_first,
                                            state->defer_feature->statement_flags);
             }
 
@@ -5238,16 +5392,17 @@ static void lex_code_defer (struct cushion_lexer_file_state_t *state,
     struct cushion_token_list_item_t *content = lex_extension_injector_content (state, file);
     LEX_WHEN_ERROR (return)
 
-    struct lex_defer_expression_t *defer =
-        cushion_allocator_allocate (&state->instance->allocator, sizeof (struct lex_defer_expression_t),
-                                    _Alignof (struct lex_defer_expression_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+    struct lex_defer_event_t *defer =
+        cushion_allocator_allocate (&state->instance->allocator, sizeof (struct lex_defer_event_t),
+                                    _Alignof (struct lex_defer_event_t), CUSHION_ALLOCATION_CLASS_TRANSIENT);
 
-    defer->source_file = file;
-    defer->source_line = line;
-    defer->content_first = content;
+    defer->type = LEX_DEFER_EVENT_TYPE_DEFER;
+    defer->defer.source_file = file;
+    defer->defer.source_line = line;
+    defer->defer.content_first = content;
 
-    defer->next = state->defer_feature->current_block->defers_first;
-    state->defer_feature->current_block->defers_first = defer;
+    defer->next = state->defer_feature->current_block->events_first;
+    state->defer_feature->current_block->events_first = defer;
 }
 
 static struct cushion_statement_accumulator_t *find_statement_accumulator (struct cushion_instance_t *instance,
@@ -5446,14 +5601,22 @@ static void lex_code_statement_accumulator (struct cushion_lexer_file_state_t *s
 
         while (block)
         {
-            if (block->defers_first)
+            struct lex_defer_event_t *event = block->events_first;
+            while (event)
             {
-                accumulator->flags |= CUSHION_STATEMENT_ACCUMULATOR_FLAG_JUMP_FORBIDDEN;
-                break;
+                if (event->type == LEX_DEFER_EVENT_TYPE_DEFER)
+                {
+                    accumulator->flags |= CUSHION_STATEMENT_ACCUMULATOR_FLAG_JUMP_FORBIDDEN;
+                    goto defer_detection_finished;
+                }
+
+                event = event->next;
             }
 
             block = block->owner;
         }
+
+    defer_detection_finished:;
     }
 
     check_statement_accumulator_unordered_pushes (state, accumulator, accumulator->name, accumulator->name_length);
