@@ -5357,7 +5357,7 @@ static void lex_code_defer (struct cushion_lexer_file_state_t *state,
         return;
     }
 
-    if ((state->defer_feature->current_block->flags & LEX_DEFER_BLOCK_FLAG_HAS_LABELS) |
+    if ((state->defer_feature->current_block->flags & LEX_DEFER_BLOCK_FLAG_HAS_LABELS) ||
         (state->defer_feature->statement_flags & LEX_DEFER_STATEMENT_FLAG_LABELED))
     {
         cushion_instance_lexer_error (
