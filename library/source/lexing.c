@@ -1331,19 +1331,13 @@ static inline unsigned int macro_replacement_context_process_identifier_into_sub
 
             return 1u;
         }
-        else
-        {
-            // Just a regular identifier.
-            macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token,
-                                                 state->tokenization.file_name, context->replacement_line);
-            return 0u;
-        }
 
-        break;
+        // Just a regular identifier.
+        macro_replacement_token_list_append (state, &context->sub_list, &context->current_token->token,
+                                             state->tokenization.file_name, context->replacement_line);
+        return 0u;
     }
     }
-
-    return 0u;
 }
 
 static void macro_replacement_context_append_sub_list (struct macro_replacement_context_t *context)
