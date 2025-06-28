@@ -277,6 +277,14 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
             return;
         }
 #endif
+        if ((already_here->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE) &
+            (node->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE))
+        {
+            // If both macros are from preserved scopes, then we cannot treat it as redefinition.
+            // From preserved scope must always be accompanied by preserved flag.
+            assert (node->flags & CUSHION_MACRO_FLAG_PRESERVED);
+            goto replace_macro;
+        }
 
         if (cushion_instance_has_option (instance, CUSHION_OPTION_FORBID_MACRO_REDEFINITION) &&
             (instance->state_flags & CUSHION_INSTANCE_STATE_FLAG_EXECUTION))

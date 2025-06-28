@@ -1684,18 +1684,12 @@ static struct lex_replace_macro_result_t lex_replace_identifier_if_macro (
     const struct lexer_pop_token_meta_t *identifier_token_meta,
     enum lex_replace_identifier_if_macro_context_t context);
 
-static inline void lex_preprocessor_preserved_tail (
+static inline void lex_output_preserved_tail_beginning (
     struct cushion_lexer_file_state_t *state,
     enum cushion_token_type_t preprocessor_token_type,
     // Macro node is required to properly paste function-line macro arguments if any.
     struct cushion_macro_node_t *macro_node_if_any)
 {
-    if (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY)
-    {
-        // When using scan only, we're not outputting anything, therefore no need for actual pass.
-        return;
-    }
-
     lex_update_line_mark (state, state->tokenization.file_name, state->tokenization.cursor_line);
     switch (preprocessor_token_type)
     {
@@ -1801,7 +1795,21 @@ static inline void lex_preprocessor_preserved_tail (
         assert (0u);
         break;
     }
+}
 
+static inline void lex_preprocessor_preserved_tail (
+    struct cushion_lexer_file_state_t *state,
+    enum cushion_token_type_t preprocessor_token_type,
+    // Macro node is required to properly paste function-line macro arguments if any.
+    struct cushion_macro_node_t *macro_node_if_any)
+{
+    if (state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY)
+    {
+        // When using scan only, we're not outputting anything, therefore no need for actual pass.
+        return;
+    }
+
+    lex_output_preserved_tail_beginning (state, preprocessor_token_type, macro_node_if_any);
     struct cushion_token_t current_token;
     struct lexer_pop_token_meta_t current_token_meta = {
         .flags = LEXER_TOKEN_STACK_ITEM_FLAG_NONE,
@@ -3636,11 +3644,24 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
     }
 
     case CUSHION_TOKEN_TYPE_NEW_LINE:
-        // No replacement list, go directly to registration.
-        goto register_macro;
-
     case CUSHION_TOKEN_TYPE_END_OF_FILE:
         // No replacement list, go directly to registration.
+
+        if (state->conditional_inclusion_node &&
+            state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_PRESERVED)
+        {
+            // Inside preserved scope, therefore is always preserved.
+            node->flags |= CUSHION_MACRO_FLAG_PRESERVED | CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE;
+            if ((state->flags & CUSHION_LEX_FILE_FLAG_SCAN_ONLY) == 0u)
+            {
+                lex_output_preserved_tail_beginning (state, CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE, node);
+                cushion_instance_output_null_terminated (state->instance, "\n");
+                lex_on_line_mark_manually_updated (state, state->tokenization.file_name,
+                                                   state->tokenization.cursor_line);
+                return;
+            }
+        }
+
         goto register_macro;
 
     case CUSHION_TOKEN_TYPE_GLUE:
@@ -3653,20 +3674,30 @@ static void lex_preprocessor_define (struct cushion_lexer_file_state_t *state)
         return;
     }
 
-    // Lex replacement list.
-    enum cushion_lex_replacement_list_result_t lex_result =
-        cushion_lex_replacement_list_from_lexer (state->instance, state, &node->replacement_list_first, &node->flags);
-    LEX_WHEN_ERROR (return)
-
-    switch (lex_result)
+    if (state->conditional_inclusion_node &&
+        state->conditional_inclusion_node->state == CONDITIONAL_INCLUSION_STATE_PRESERVED)
     {
-    case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
-        break;
-
-    case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
-        node->flags |= CUSHION_MACRO_FLAG_PRESERVED;
+        // Inside preserved scope, therefore is always preserved.
+        node->flags |= CUSHION_MACRO_FLAG_PRESERVED | CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE;
         lex_preprocessor_preserved_tail (state, CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE, node);
-        break;
+    }
+    else
+    {
+        // Lex replacement list.
+        enum cushion_lex_replacement_list_result_t lex_result = cushion_lex_replacement_list_from_lexer (
+            state->instance, state, &node->replacement_list_first, &node->flags);
+        LEX_WHEN_ERROR (return)
+
+        switch (lex_result)
+        {
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR:
+            break;
+
+        case CUSHION_LEX_REPLACEMENT_LIST_RESULT_PRESERVED:
+            node->flags |= CUSHION_MACRO_FLAG_PRESERVED;
+            lex_preprocessor_preserved_tail (state, CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE, node);
+            break;
+        }
     }
 
 register_macro:
