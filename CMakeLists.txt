@@ -13,11 +13,6 @@ set (CMAKE_C_STANDARD 11)
 option (CUSHION_TEST "Whether tests for Cushion are being built." OFF)
 option (CUSHION_EXTENSIONS "Whether Cushion library is built with extension support." OFF)
 
-# Unicode mode was added only temporary for testing and is not tested properly due to issues with slow code
-# generation for huge character groups in re2c. It also generates lots of code and is slow to compile.
-option (CUSHION_IDENTIFIERS_UNICODE
-        "Enables support for non-ASCII unicode characters in identifiers. Makes Cushion build very slow." OFF)
-
 # Implementation constants.
 
 set (CUSHION_ALLOCATOR_PAGE_SIZE "1048576" CACHE STRING "Size of an internal allocator inside cushion context.")

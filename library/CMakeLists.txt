@@ -1,12 +1,6 @@
 set (TOKENIZATION_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/source/tokenization.c")
 set (TOKENIZATION_SOURCE_PREPROCESSED "${CMAKE_CURRENT_BINARY_DIR}/tokenization.c")
 
-if (CUSHION_IDENTIFIERS_UNICODE)
-    set (RE2C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/re2c/unicode")
-else ()
-    set (RE2C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/re2c/ascii")
-endif ()
-
 add_custom_command (
         OUTPUT "${TOKENIZATION_SOURCE_PREPROCESSED}"
         COMMAND
@@ -14,7 +8,6 @@ add_custom_command (
         "${TOKENIZATION_SOURCE}"
         -o "${TOKENIZATION_SOURCE_PREPROCESSED}"
         --depfile "${CMAKE_CURRENT_BINARY_DIR}/tokenization.depfile"
-        -I "${RE2C_INCLUDE_DIR}"
         DEPENDS "${TOKENIZATION_SOURCE}"
         DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/tokenization.depfile"
         COMMENT "Preprocess re2c syntax inside Cushion tokenization implementation."
