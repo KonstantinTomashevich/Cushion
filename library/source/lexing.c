@@ -360,6 +360,17 @@ static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_s
             }
 
             break;
+
+        case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
+            if (!cushion_instance_has_feature (context->instance, CUSHION_FEATURE_REPLACEMENT_INDEX))
+            {
+                cushion_instance_execution_error (context->instance, context->error_context,
+                                                  "Encountered __CUSHION_REPLACEMENT_INDEX__, but this feature is not "
+                                                  "enabled in current execution context.");
+                return CUSHION_LEX_REPLACEMENT_LIST_RESULT_REGULAR;
+            }
+
+            break;
 #endif
 
         default:
@@ -695,7 +706,8 @@ static enum cushion_identifier_kind_t lex_relculate_identifier_kind (const char 
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_REF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF)
     CHECK_KIND ("CUSHION_STATEMENT_ACCUMULATOR_UNREF", CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF)
     CHECK_KIND ("CUSHION_SNIPPET", CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET)
-    CHECK_KIND ("CUSHION_EVALUATED_ARGUMENT", CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT)
+    CHECK_KIND ("__CUSHION_EVALUATED_ARGUMENT__", CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT)
+    CHECK_KIND ("__CUSHION_REPLACEMENT_INDEX__", CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX)
 
     CHECK_KIND ("__FILE__", CUSHION_IDENTIFIER_KIND_FILE)
     CHECK_KIND ("__LINE__", CUSHION_IDENTIFIER_KIND_LINE)
@@ -744,6 +756,9 @@ struct macro_replacement_context_t
     unsigned int replacement_line;
     struct macro_replacement_token_list_t result;
     struct macro_replacement_token_list_t sub_list;
+#if defined(CUSHION_EXTENSIONS)
+    unsigned int replacement_index;
+#endif
 };
 
 static inline struct cushion_error_context_t macro_replacement_error_context (
@@ -1291,6 +1306,58 @@ static inline unsigned int macro_replacement_context_process_identifier_into_sub
 
         return 1u;
     }
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
+    {
+        // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
+        unsigned int value = context->replacement_index;
+        unsigned int string_length = 0u;
+
+        if (value > 0u)
+        {
+            while (value > 0u)
+            {
+                ++string_length;
+                value /= 10u;
+            }
+        }
+        else
+        {
+            string_length = 1u;
+        }
+
+        char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
+                                                              _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+        formatted_literal[string_length] = '\0';
+        value = context->replacement_index;
+
+        if (value > 0u)
+        {
+            char *cursor = formatted_literal + string_length - 1u;
+            while (value > 0u)
+            {
+                *cursor = (char) ('0' + (value % 10u));
+                --cursor;
+                value /= 10u;
+            }
+        }
+        else
+        {
+            formatted_literal[0u] = '0';
+        }
+
+        struct cushion_token_t token = {
+            .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
+            .begin = formatted_literal,
+            .end = formatted_literal + string_length,
+            .unsigned_number_value = state->last_token_line,
+        };
+
+        macro_replacement_token_list_append (state, &context->sub_list, &token, state->tokenization.file_name,
+                                             context->replacement_line);
+        return 1u;
+    }
 #endif
 
     default:
@@ -1387,6 +1454,9 @@ static struct cushion_token_list_item_t *lex_do_macro_replacement (
                 .first = NULL,
                 .last = NULL,
             },
+#if defined(CUSHION_EXTENSIONS)
+        .replacement_index = state->instance->macro_replacement_index++,
+#endif
     };
 
     while (context.current_token && !cushion_instance_is_error_signaled (state->instance))
@@ -1873,6 +1943,12 @@ static inline void lex_preprocessor_preserved_tail (
                     "Encountered cushion evaluate argument keyword in preserved preprocessor context.");
                 return;
 
+            case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
+                    "Encountered cushion replacement index keyword in preserved preprocessor context.");
+                return;
+
             default:
                 break;
             }
@@ -2243,6 +2319,7 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
         case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
         case CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT:
+        case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
             cushion_instance_lexer_error (state, meta, "Encountered unsupported reserved identifier in defined check.");
             return 0u;
 
@@ -4036,6 +4113,7 @@ static struct cushion_token_list_item_t *lex_extension_injector_content (struct 
             case CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF:
             case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
             case CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT:
+            case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
                 cushion_instance_lexer_error (
                     state, &current_token_meta,
                     "Encountered cushion keywords in CUSHION_STATEMENT_ACCUMULATOR_PUSH / CUSHION_DEFER code block, "
@@ -6408,11 +6486,6 @@ static unsigned int lex_code_identifier_is_replaced (struct cushion_lexer_file_s
                                       "Encountered cushion preserve keyword in unexpected context.");
         return 1u;
 
-    case CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT:
-        cushion_instance_lexer_error (state, current_token_meta,
-                                      "Encountered cushion evaluated argument keyword in unexpected context.");
-        return 1u;
-
 #if defined(CUSHION_EXTENSIONS)
     case CUSHION_IDENTIFIER_KIND_CUSHION_DEFER:
         if (cushion_instance_has_feature (state->instance, CUSHION_FEATURE_DEFER))
@@ -6472,6 +6545,16 @@ static unsigned int lex_code_identifier_is_replaced (struct cushion_lexer_file_s
                                           "Encountered CUSHION_SNIPPET, but this feature is not enabled.");
         }
 
+        return 1u;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT:
+        cushion_instance_lexer_error (state, current_token_meta,
+                                      "Encountered cushion evaluated argument keyword in unexpected context.");
+        return 1u;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
+        cushion_instance_lexer_error (state, current_token_meta,
+                                      "Encountered cushion replacement index keyword in unexpected context.");
         return 1u;
 #endif
 

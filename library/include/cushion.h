@@ -28,6 +28,7 @@ enum cushion_feature_t
     CUSHION_FEATURE_STATEMENT_ACCUMULATOR,
     CUSHION_FEATURE_SNIPPET,
     CUSHION_FEATURE_EVALUATED_ARGUMENT,
+    CUSHION_FEATURE_REPLACEMENT_INDEX,
 };
 
 /// \details There is no option for keeping comments for several reasons:

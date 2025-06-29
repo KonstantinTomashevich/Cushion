@@ -369,6 +369,13 @@ STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
 > Wrapper macros are not supported inside `__CUSHION_EVALUATED_ARGUMENT__` as they do not make any sense here: it is
 > counterintuitive to paste wrapper macro as argument, so there is no sense to support this case.
 
+### Replacement index
+
+This feature provides `__CUSHION_REPLACEMENT_INDEX__` keyword inside macros that behaves like argument and is always
+unwrapped as integer token equal to the index of macro replacement list evaluation call during current Cushion 
+execution. It is a useful utility for generating unique identifiers like unique variable names for some temporary 
+variables, for example handles for currently opened profiler scopes.
+
 ## Limitations
 
 Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 

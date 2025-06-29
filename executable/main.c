@@ -29,7 +29,8 @@ static const char help_message[] =
     "                           wrapper-macro            Support for wrapper macros extension.\n"
     "                           statement-accumulator    Support for statement accumulator extension.\n"
     "                           snippet                  Support for snippet macros extension.\n"
-    "                           evaluated-argument        Support for macro argument evaluation extension.\n"
+    "                           evaluated-argument       Support for macro argument evaluation extension.\n"
+    "                           replacement-index        Support for macro replacement index extension.\n"
     "\n"
     "    --options          Any argument after this one is option. Supported:\n"
     "                           forbid-macro-redefinition    Ignore macro redefinitions and print error\n"
@@ -141,6 +142,10 @@ int main (int argc, char **argv)
             else if (strcmp (argument, "evaluated-argument") == 0)
             {
                 cushion_context_configure_feature (context, CUSHION_FEATURE_EVALUATED_ARGUMENT, 1u);
+            }
+            else if (strcmp (argument, "replacement-index") == 0)
+            {
+                cushion_context_configure_feature (context, CUSHION_FEATURE_REPLACEMENT_INDEX, 1u);
             }
             else
             {

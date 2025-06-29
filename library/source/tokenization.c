@@ -284,7 +284,7 @@ static inline void re2c_restore_saved_cursor (struct cushion_tokenization_state_
  re2c:flags:utf-8 = 1;
  re2c:flags:case-ranges = 0;
  re2c:tags:expression = "state->tags->@@";
- 
+
  id_start = [a-zA-Z_];
  id_continue = [a-zA-Z_0-9]*;
  */
@@ -638,6 +638,8 @@ start_next_token:
          "CUSHION_SNIPPET" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET); }
          "__CUSHION_EVALUATED_ARGUMENT__"
          { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT); }
+         "__CUSHION_REPLACEMENT_INDEX__"
+         { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX); }
 
          "__FILE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_FILE); }
          "__LINE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_LINE); }

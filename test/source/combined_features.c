@@ -32,6 +32,10 @@
         }                                                                                                              \
     }
 
+#define PROFILER_SCOPE(NAME)                                                                                           \
+    profiler_scope_handle_t profiler_scope_##__CUSHION_REPLACEMENT_INDEX__ = profile_scope_begin (#NAME);              \
+    CUSHION_DEFER { profiler_scope_end (profiler_scope_##__CUSHION_REPLACEMENT_INDEX__); }
+
 struct database_context_1_t
 {
     CUSHION_STATEMENT_ACCUMULATOR (database_context_1)
@@ -46,6 +50,7 @@ BIND_DATABASE_CONTEXT (database_context_1, database_context_ptr)
 
 void database_function_1_a (struct database_context_1_t *database_context_ptr)
 {
+    PROFILER_SCOPE (test_1);
     DATABASE_QUERY (q_1, value_type_a, 1)
     {
         // Break for test.
@@ -60,6 +65,7 @@ void database_function_1_a (struct database_context_1_t *database_context_ptr)
 
     DATABASE_QUERY (q_3, value_type_a, 3)
     {
+        PROFILER_SCOPE (test_2);
         // Return for test.
         return;
     }
@@ -69,8 +75,10 @@ void database_function_1_a (struct database_context_1_t *database_context_ptr)
 
 void database_function_1_b (struct database_context_1_t *database_context_ptr)
 {
+    PROFILER_SCOPE (a);
     DATABASE_QUERY (q_1, value_type_b, 1)
     {
+        PROFILER_SCOPE (b);
         DATABASE_QUERY (q_2, value_type_a, 4)
         {
             // Check break inside query;
@@ -79,6 +87,7 @@ void database_function_1_b (struct database_context_1_t *database_context_ptr)
 
         DATABASE_QUERY (q_3, value_type_a, 4)
         {
+            PROFILER_SCOPE (c);
             DATABASE_QUERY (q_4, value_type_a, 5)
             {
                 // Check return inside queries;

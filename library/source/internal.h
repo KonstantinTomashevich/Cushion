@@ -170,6 +170,8 @@ struct cushion_instance_t
 
     struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_first;
     struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_last;
+
+    unsigned int macro_replacement_index;
 #endif
 
     struct cushion_macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
@@ -633,6 +635,7 @@ enum cushion_identifier_kind_t
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF,
     CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET,
     CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT,
+    CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX,
 
     CUSHION_IDENTIFIER_KIND_DEFINED,
     CUSHION_IDENTIFIER_KIND_HAS_INCLUDE,

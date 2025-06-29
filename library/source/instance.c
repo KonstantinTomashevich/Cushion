@@ -169,6 +169,8 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
 
     instance->statement_unordered_push_first = NULL;
     instance->statement_unordered_push_last = NULL;
+
+    instance->macro_replacement_index = 0u;
 #endif
 
     instance->inputs_first = NULL;
@@ -277,7 +279,7 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
             return;
         }
 #endif
-        if ((already_here->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE) &
+        if ((already_here->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE) &&
             (node->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE))
         {
             // If both macros are from preserved scopes, then we cannot treat it as redefinition.
@@ -294,10 +296,7 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
             return;
         }
 
-#if defined(CUSHION_EXTENSIONS)
-        // Results in unused label error unless extensions are used.
     replace_macro:
-#endif
         // Just replace previous node content and exit.
         already_here->value = node->value;
         already_here->parameters_first = node->parameters_first;
