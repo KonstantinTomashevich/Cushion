@@ -729,7 +729,7 @@ start_next_token:
          long_long_integer_suffix = "ll" | "LL";
          bit_precise_integer_suffix = "wb" | "WB";
          integer_suffix =
-             (unsigned_integer_suffix (long_integer_suffix | long_long_integer_suffix | bit_precise_integer_suffix)?) |
+             (unsigned_integer_suffix? (long_integer_suffix | long_long_integer_suffix | bit_precise_integer_suffix)) |
              (long_integer_suffix? unsigned_integer_suffix) |
              (long_long_integer_suffix? unsigned_integer_suffix) |
              (bit_precise_integer_suffix? unsigned_integer_suffix);
