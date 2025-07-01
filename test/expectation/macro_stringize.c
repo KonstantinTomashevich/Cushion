@@ -7,6 +7,6 @@ int main (int argc, char **argv)
     const char *_2 = "abc" ;
     const char *_3 = "\"abc\"" ;
     const char *_4 = "\"\\\"abc\\\"\"" ;
-    const char *_5 = "1, 2, 3, 4, \"abc\", \"\\\"abc\\\"\"" ;
+    const char *_5 = "1 , 2 , 3 , 4 , \"abc\" , \"\\\"abc\\\"\"" ;
     return 0;
 }

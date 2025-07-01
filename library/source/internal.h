@@ -170,6 +170,8 @@ struct cushion_instance_t
 
     struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_first;
     struct cushion_statement_accumulator_unordered_push_t *statement_unordered_push_last;
+
+    unsigned int macro_replacement_index;
 #endif
 
     struct cushion_macro_node_t *macro_buckets[CUSHION_MACRO_BUCKETS];
@@ -218,8 +220,10 @@ enum cushion_macro_flags_t
 
     CUSHION_MACRO_FLAG_VARIADIC_PARAMETERS = 1u << 1u,
     CUSHION_MACRO_FLAG_PRESERVED = 1u << 2u,
+    CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE = 1u << 3u,
 #if defined(CUSHION_EXTENSIONS)
-    CUSHION_MACRO_FLAG_WRAPPED = 1u << 3u,
+    CUSHION_MACRO_FLAG_WRAPPED = 1u << 4u,
+    CUSHION_MACRO_FLAG_SNIPPET = 1u << 5u,
 #endif
 };
 
@@ -583,14 +587,18 @@ enum cushion_token_type_t
     CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
     CUSHION_TOKEN_TYPE_NUMBER_FLOATING,
 
+    /// \details Identifier that starts from digit is not a valid token for the language, but a valid token for
+    ///          the preprocessor for macro arguments. Therefore we must support it for that case.
+    CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE,
+
     CUSHION_TOKEN_TYPE_CHARACTER_LITERAL,
     CUSHION_TOKEN_TYPE_STRING_LITERAL,
 
     CUSHION_TOKEN_TYPE_NEW_LINE,
 
     /// \brief Whitespaces as a glue.
-    /// \brief Glue is saved as token so lexer can handle it in output generation logic without relying on tokenizer
-    ///        to handle its output.
+    /// \details Glue is saved as token so lexer can handle it in output generation logic without relying on tokenizer
+    ///          to handle its output.
     CUSHION_TOKEN_TYPE_GLUE,
 
     /// \brief Actual comments.
@@ -619,13 +627,15 @@ enum cushion_identifier_kind_t
     CUSHION_IDENTIFIER_KIND_LINE,
 
     CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE,
-
     CUSHION_IDENTIFIER_KIND_CUSHION_DEFER,
     CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_PUSH,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF,
     CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF,
+    CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET,
+    CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT,
+    CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX,
 
     CUSHION_IDENTIFIER_KIND_DEFINED,
     CUSHION_IDENTIFIER_KIND_HAS_INCLUDE,

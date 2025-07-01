@@ -40,12 +40,18 @@ register_test ("multiple_input" "--input"
 register_test ("pragma_trivial")
 
 if (CUSHION_EXTENSIONS)
-    register_test ("combined_features" "--features" "defer" "wrapper-macro" "statement-accumulator")
+    register_test (
+            "combined_features"
+            "--features" 
+            "defer" "wrapper-macro" "statement-accumulator" "snippet" "evaluated-argument" "replacement-index")
     register_test ("defer_goto" "--features" "defer")
     register_test ("defer_loop" "--features" "defer")
     register_test ("defer_scope" "--features" "defer")
     register_test ("defer_switch" "--features" "defer")
+    register_test ("evaluated_argument_trivial" "--features" "evaluated-argument")
+    register_test ("evaluated_argument_variadic" "--features" "evaluated-argument")
     register_test ("macro_wrapper" "--features" "wrapper-macro")
+    register_test ("snippet_trivial" "--features" "snippet")
     register_test ("statement_accumulator_combine_files" "--features" "statement-accumulator")
     register_test ("statement_accumulator_macro" "--features" "wrapper-macro" "statement-accumulator")
     register_test ("statement_accumulator_optional" "--features" "statement-accumulator")

@@ -130,7 +130,7 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
 #endif
 
     const size_t shift = preserve_from - state->input_buffer;
-    const size_t used = state->limit - state->token;
+    const size_t used = state->limit - preserve_from;
 
     if (shift == 0u)
     {
@@ -157,7 +157,7 @@ static enum cushion_internal_result_t re2c_refill_buffer (struct cushion_instanc
     }
 
     // Shift buffer contents (discard everything up to the current token).
-    memmove (state->input_buffer, state->token, used);
+    memmove (state->input_buffer, preserve_from, used);
     state->limit -= shift;
     state->cursor -= shift;
     state->marker -= shift;
@@ -284,9 +284,22 @@ static inline void re2c_restore_saved_cursor (struct cushion_tokenization_state_
  re2c:flags:utf-8 = 1;
  re2c:flags:case-ranges = 0;
  re2c:tags:expression = "state->tags->@@";
+
+ id_start = [a-zA-Z_];
+ id_continue = [a-zA-Z_0-9]*;
  */
 
-/*!include:re2c "identifiers.re" */
+// Non-ASCII characters are not supported in code as we do not expect them in identifiers.
+/*!rules:re2c:check_unsupported_in_code
+ [^\x00-\x7F]
+ {
+     cushion_instance_tokenization_error (
+         instance, state,
+         "Encountered non-ASCII character outside of comments and string literals."
+         "This version of Cushion is built without unicode support for anything outside of comments and literals.");
+     return;
+ }
+ */
 
 struct cushion_token_list_item_t *cushion_save_token_to_memory (struct cushion_instance_t *instance,
                                                                 const struct cushion_token_t *token,
@@ -327,6 +340,7 @@ struct cushion_token_list_item_t *cushion_save_token_to_memory (struct cushion_i
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
     case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
     case CUSHION_TOKEN_TYPE_NUMBER_FLOATING:
+    case CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE:
     case CUSHION_TOKEN_TYPE_NEW_LINE:
     case CUSHION_TOKEN_TYPE_GLUE:
     case CUSHION_TOKEN_TYPE_COMMENT:
@@ -611,7 +625,6 @@ start_next_token:
          "__VA_OPT__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_VA_OPT); }
 
          "__CUSHION_PRESERVE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_PRESERVE); }
-
          "CUSHION_DEFER" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_DEFER); }
          "__CUSHION_WRAPPED__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_WRAPPED); }
          "CUSHION_STATEMENT_ACCUMULATOR"
@@ -622,6 +635,11 @@ start_next_token:
          { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_REF); }
          "CUSHION_STATEMENT_ACCUMULATOR_UNREF"
          { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_STATEMENT_ACCUMULATOR_UNREF); }
+         "CUSHION_SNIPPET" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET); }
+         "__CUSHION_EVALUATED_ARGUMENT__"
+         { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT); }
+         "__CUSHION_REPLACEMENT_INDEX__"
+         { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX); }
 
          "__FILE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_FILE); }
          "__LINE__" { PREPROCESSOR_EMIT_TOKEN_IDENTIFIER (CUSHION_IDENTIFIER_KIND_LINE); }
@@ -711,7 +729,7 @@ start_next_token:
          long_long_integer_suffix = "ll" | "LL";
          bit_precise_integer_suffix = "wb" | "WB";
          integer_suffix =
-             (unsigned_integer_suffix (long_integer_suffix | long_long_integer_suffix | bit_precise_integer_suffix)?) |
+             (unsigned_integer_suffix? (long_integer_suffix | long_long_integer_suffix | bit_precise_integer_suffix)) |
              (long_integer_suffix? unsigned_integer_suffix) |
              (long_long_integer_suffix? unsigned_integer_suffix) |
              (bit_precise_integer_suffix? unsigned_integer_suffix);
@@ -733,12 +751,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         decimal_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught decimal integer with unknown suffix.");
-             return;
-         }
-
          octal_integer integer_suffix?
          {
              if (tokenize_octal_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
@@ -749,12 +761,6 @@ start_next_token:
              }
 
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
-         }
-
-         octal_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught octal integer with unknown suffix.");
-             return;
          }
 
          hex_integer integer_suffix?
@@ -769,12 +775,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         hex_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught hex integer with unknown suffix.");
-             return;
-         }
-
          binary_integer integer_suffix?
          {
              if (tokenize_binary_value (marker_sub_begin, marker_sub_end, &output->unsigned_number_value) !=
@@ -787,12 +787,6 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_INTEGER);
          }
 
-         binary_integer identifier
-         {
-             cushion_instance_tokenization_error (instance, state, "Caught binary integer with unknown suffix.");
-             return;
-         }
-
          digit_sequence = [0-9] [0-9']*;
          hex_digit_sequence = [0-9a-fA-F] [0-9a-fA-F']*;
          real_floating_suffix = [fF] | [lL] | "df" | "dd" | "dl" | "DF" | "DD" | "DL";
@@ -802,7 +796,7 @@ start_next_token:
              (complex_floating_suffix real_floating_suffix?);
 
          // Decimal floating literal.
-         (digit_sequence? "." digit_sequence) | (digit_sequence ".") ([eE]? "-"? digit_sequence)? floating_suffix?
+         ((digit_sequence? "." digit_sequence) | (digit_sequence "."?)) ([eE] "-"? digit_sequence)? floating_suffix?
          {
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_FLOATING);
          }
@@ -814,7 +808,12 @@ start_next_token:
              PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_NUMBER_FLOATING);
          }
 
-         simple_escape_sequence = "\\" ['"?\\abfnrtv];
+         [0-9] identifier
+         {
+             PREPROCESSOR_EMIT_TOKEN (CUSHION_TOKEN_TYPE_DIGIT_IDENTIFIER_SEQUENCE);
+         }
+
+         simple_escape_sequence = "\\" (['"?\\abfnrtv] | ([0-9]+));
          // For now, we only support simple escape sequences, but that might be changed in the future.
          escape_sequence = simple_escape_sequence;
          character_literal_sequence = (escape_sequence | [^'\\\n])*;

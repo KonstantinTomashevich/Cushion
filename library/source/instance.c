@@ -64,11 +64,8 @@ void *cushion_allocator_allocate (struct cushion_allocator_t *allocator,
             new_page->bottom_persistent = new_page->data + CUSHION_ALLOCATOR_PAGE_SIZE;
             allocator->current_page->next = new_page;
         }
-        else
-        {
-            allocator->current_page = allocator->current_page->next;
-        }
 
+        allocator->current_page = allocator->current_page->next;
         result = allocator_page_allocate (allocator->current_page, size, alignment, class);
     }
 
@@ -172,6 +169,8 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
 
     instance->statement_unordered_push_first = NULL;
     instance->statement_unordered_push_last = NULL;
+
+    instance->macro_replacement_index = 0u;
 #endif
 
     instance->inputs_first = NULL;
@@ -260,19 +259,47 @@ void cushion_instance_macro_add (struct cushion_instance_t *instance,
 
     if (already_here)
     {
+#if defined(CUSHION_EXTENSIONS)
+        if ((already_here->flags & CUSHION_MACRO_FLAG_SNIPPET) && (node->flags & CUSHION_MACRO_FLAG_SNIPPET))
+        {
+            // Snippets are always replaceable.
+            goto replace_macro;
+        }
+        else if (already_here->flags & CUSHION_MACRO_FLAG_SNIPPET)
+        {
+            cushion_instance_execution_error (
+                instance, error_context, "Caught attempt to replace snippet macro \"%s\" with real macro.", node->name);
+            return;
+        }
+        else if (node->flags & CUSHION_MACRO_FLAG_SNIPPET)
+        {
+            cushion_instance_execution_error (instance, error_context,
+                                              "Caught attempt to replace normal macro \"%s\" with snippet macro.",
+                                              node->name);
+            return;
+        }
+#endif
+        if ((already_here->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE) &&
+            (node->flags & CUSHION_MACRO_FLAG_FROM_PRESERVED_SCOPE))
+        {
+            // If both macros are from preserved scopes, then we cannot treat it as redefinition.
+            // From preserved scope must always be accompanied by preserved flag.
+            assert (node->flags & CUSHION_MACRO_FLAG_PRESERVED);
+            goto replace_macro;
+        }
+
         if (cushion_instance_has_option (instance, CUSHION_OPTION_FORBID_MACRO_REDEFINITION) &&
             (instance->state_flags & CUSHION_INSTANCE_STATE_FLAG_EXECUTION))
         {
             cushion_instance_execution_error (instance, error_context, "Encountered macro \"%s\" redefinition.",
                                               node->name);
-        }
-        else
-        {
-            // Just replace previous node content and exit.
-            already_here->value = node->value;
-            already_here->parameters_first = node->parameters_first;
+            return;
         }
 
+    replace_macro:
+        // Just replace previous node content and exit.
+        already_here->value = node->value;
+        already_here->parameters_first = node->parameters_first;
         return;
     }
 

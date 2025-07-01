@@ -3,11 +3,6 @@
 Cushion is a **partial** C preprocessor for softening the code before passing it to custom code generation software.
 
 > **Warning:**
-> Cushion is still in early development and not test on a big enough project.
-> We plan to test it on [Kan project](https://github.com/KonstantinTomashevich/Kan) first and it might result in lots 
-> of changes if something is wrong in current implementation.
-
-> **Warning:**
 > Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
 > creating issues.
 
@@ -304,27 +299,134 @@ statement accumulators can only be resolved when preprocessing is finished, ther
 But it shouldn't be an issue in most cases as it is very unlikely that you'll need to preprocess gigabytes of code and
 even if you do, you'll have lots of other issues to solve already.
 
+### Snippets
+
+Snippet is a small object-like macro that can be created from inside another macro replacement list using 
+`CUSHION_SNIPPET`, similar to how `_Pragma` is unwrapped. Unlike macros, snippet redefinition is always allowed. 
+For example:
+
+```c
+#define BIND_ACCUMULATOR(ACCUMULATOR_NAME, CONTEXT_PATH)                                                               \
+    CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, ACCUMULATOR_NAME)                                 \
+    CUSHION_SNIPPET (DATABASE_CONTEXT_PATH, (CONTEXT_PATH))
+
+// Then DATABASE_CONTEXT_PATH could be used as macro, for example:
+// DATABASE_CONTEXT_PATH->query_field
+```
+
+They can be both used as syntax sugar and as a way to share context between chain of macro calls. For example, you
+can define snippet for access deletion from main query macro and then use it in deletion macro instead of requesting
+additional arguments.
+
+First argument of the `CUSHION_SNIPPET` must always be an identifier -- snippet name. All arguments after that are
+treated as token array, close to how `__VA_ARGS__` are treated.
+
+> **Warning:**
+> Snippets are never preserved in the output.
+
+### Macro argument evaluation
+
+By standard, during macro replacement list evaluation argument tokens are unwrapped and `#`/`##` operations are applied 
+before any other macro evaluation takes place. While it is okay in most cases, it causes potentially unexpected behavior
+(from the user perspective) when macro call is passed as argument, but this argument participates in `#`/`##`.
+For example:
+
+```c
+#define GENERATED_CONTAINER_TYPE_NAME(TYPE) generated_container_##TYPE
+#define STRINGIZE_ME(...) #__VA_ARGS__
+
+// Then 
+STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
+// is replaced by
+"GENERATED_CONTAINER_TYPE_NAME (abc)"
+// by the standard.
+```
+
+But, in the above example, we might've wanted to get `"generated_container_abc"` string, as it would be more
+convenient for logging and might even be required for some kind of data output like json.
+
+To solve this issue, `__CUSHION_EVALUATED_ARGUMENT__` keyword inside macros is introduced. It evaluates all macro 
+replacements in given arguments including `__VA_ARGS__`. This keyword should be used the same way as function-like macro
+or `__VA_OPT__` and should always have only one argument -- macro argument name identifier, `__VA_ARGS__` or 
+`__VA_OPT__` expression. For example:
+
+```c
+#define GENERATED_CONTAINER_TYPE_NAME(TYPE) generated_container_##TYPE
+#define STRINGIZE_ME(...) #__CUSHION_EVALUATED_ARGUMENT__ (__VA_ARGS__)
+
+// Then 
+STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
+// is replaced by
+"generated_container_abc"
+// due to __CUSHION_EVALUATED_ARGUMENT__ usage.
+```
+
+> **Warning:**
+> Wrapper macros are not supported inside `__CUSHION_EVALUATED_ARGUMENT__` as they do not make any sense here: it is
+> counterintuitive to paste wrapper macro as argument, so there is no sense to support this case.
+
+### Replacement index
+
+This feature provides `__CUSHION_REPLACEMENT_INDEX__` keyword inside macros that behaves like argument and is always
+unwrapped as integer token equal to the index of macro replacement list evaluation call during current Cushion 
+execution. It is a useful utility for generating unique identifiers like unique variable names for some temporary 
+variables, for example handles for currently opened profiler scopes.
+
 ## Limitations
 
-Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 
-implementation has several limitations:
+Right now Cushion is more of a hobby project and is not a heavy-production-ready tech. 
+Also, it is designed as a tool for [my game engine project Kan](https://github.com/KonstantinTomashevich/Kan),
+therefore there might be cases that I didn't catch while working on it.
 
-- Unicode characters are not fully supported: they are only supported in strings and comments.
-  The reason is that re2c drowns in big character classes and becomes very slow.
-- Universal character names are not supported.
-- Only simple escape sequences (that is the term from specification) are supported.
-- Nothing related to ISO/IEC 646 is supported.
-- `typeof` from C23 is used to properly generate returns for `CUSHION_DEFER`. It is possible to guess type for temporary
-  storing return expression result before executing defers without `typeof`, but it is difficult and error-prone, 
-  therefore `typeof` is used for now as it is supported by most popular compilers.
-- There might be some bugs and some non-standard-complying behaviours, unfortunately. Not intentionally, but due to lack
-  of time and lack of skills (author is not a profession compiler/parser developer and only did these things as hobby 
-  projects). Also, this tool is only properly used right now on 
-  [Kan project](https://github.com/KonstantinTomashevich/Kan), therefore different projects might encounter different
-  errors that weren't found on Kan.
+The main limitations of current implementation are:
 
-These limitations will be addressed on per-request basis when it is really needed and when author has enough time to 
-do it properly.
+- Unicode characters are only supported inside comments or string literals. They're not supported in identifiers and
+  other language constructs. The reason is that we're using re2c for tokenization and re2c is initially not designed to
+  handle such big character groups, which makes tokenizer quite big and takes long time to compile. I'm not using
+  non-ASCII characters outside of comments and string literals in my project, so I decided to just omit this issue.
+
+- Universal character names are not supported. I don't use them in my other projects, therefore I didn't spend time on
+  supporting these feature here.
+
+- Only simple escape sequences (term from open C23 standard draft) are supported. The reason is the same: I don't use
+  non-simple escape sequence in my projects.
+
+- ISO/IEC 646 is not supported as it seems irrelevant nowadays.
+
+- Macro unwraps inside `#line` directive is not supported.
+
+- `##` operation is only supported for merging identifier token with other identifier or integers: it means that only
+  cases that are guaranteed to be an identifier are supported. Supporting other cases requires tokenization refactor,
+  but it is not really needed right now as all other cases are usually just mistakes, not real use cases.
+
+- `has_include`, `has_embed` and `has_c_attribute` inside conditional inclusion expressions cannot be evaluated as 
+  Cushion does not have full knowledge needed to properly evaluate it for target compiler.
+
+- Only ordinary encoded character literals are supported in conditional inclusion expression as other encodings are not 
+  needed right now, so there is no way to properly test it in real environment. The same goes for multi-character 
+  literals in conditional evaluation expressions.
+
+- Only ordinary encoded strings are supported as `_Pragma` arguments.
+
+- Defer feature relies on `typeof` from C23 standard (or GCC extension) in order to generate proper type for the 
+  variable that will store return value while pre-return defers are being executed.
+
+- `CUSHION_DEFER` cannot be used in braceless if/for/while/do as it would require retrospective brace addition.
+  It also means that return/goto that might trigger defers from parent scopes also should not be used in braceless
+  if/for/while/do scopes.
+
+- `_Pragma` is not supported inside `CUSHION_DEFER` and `CUSHION_STATEMENT_ACCUMULATOR_PUSH` blocks inside macros.
+  There is no difficult reason not to support it here, it is just not needed yet and therefore its support was omitted
+  in that case. `_Pragma` is supported in all other scopes nevertheless.
+
+- Macro unwraps are not supported for `CUSHION_STATEMENT_ACCUMULATOR`, `CUSHION_STATEMENT_ACCUMULATOR_PUSH`,
+  `CUSHION_STATEMENT_ACCUMULATOR_REF` and `CUSHION_STATEMENT_ACCUMULATOR_UNREF` **arguments** (but supported in pushed 
+  blocks, of course) as there is generally no reason to introduce additional complexity there.
+
+Other limitations may arise due to the fact that I'm not a compiler developer and I don't know standard thoroughly, so
+I might've missed something else.
+
+Contributions are welcome, but please contact me prior to starting work on fixing any of those limitations.
 
 ## Acknowledgement
 
