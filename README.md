@@ -3,11 +3,6 @@
 Cushion is a **partial** C preprocessor for softening the code before passing it to custom code generation software.
 
 > **Warning:**
-> Cushion is still in early development and not test on a big enough project.
-> We plan to test it on [Kan project](https://github.com/KonstantinTomashevich/Kan) first and it might result in lots 
-> of changes if something is wrong in current implementation.
-
-> **Warning:**
 > Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
 > creating issues.
 
@@ -312,15 +307,16 @@ For example:
 
 ```c
 #define BIND_ACCUMULATOR(ACCUMULATOR_NAME, CONTEXT_PATH)                                                               \
- CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, ACCUMULATOR_NAME)                                    \
- CUSHION_SNIPPET (DATABASE_CONTEXT_PATH, (CONTEXT_PATH))
+    CUSHION_STATEMENT_ACCUMULATOR_REF (database_context_accumulator, ACCUMULATOR_NAME)                                 \
+    CUSHION_SNIPPET (DATABASE_CONTEXT_PATH, (CONTEXT_PATH))
 
 // Then DATABASE_CONTEXT_PATH could be used as macro, for example:
 // DATABASE_CONTEXT_PATH->query_field
 ```
 
-Main reason for adding snippets is just a little syntax sugar. They're not as influential as other features, but can
-make usage of other features a little bit more convenient.
+They can be both used as syntax sugar and as a way to share context between chain of macro calls. For example, you
+can define snippet for access deletion from main query macro and then use it in deletion macro instead of requesting
+additional arguments.
 
 First argument of the `CUSHION_SNIPPET` must always be an identifier -- snippet name. All arguments after that are
 treated as token array, close to how `__VA_ARGS__` are treated.
