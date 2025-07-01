@@ -374,25 +374,59 @@ variables, for example handles for currently opened profiler scopes.
 
 ## Limitations
 
-Right now Cushion is more of a hobby project and is not a heavy-production-ready thing. Therefore, current 
-implementation has several limitations:
+Right now Cushion is more of a hobby project and is not a heavy-production-ready tech. 
+Also, it is designed as a tool for [my game engine project Kan](https://github.com/KonstantinTomashevich/Kan),
+therefore there might be cases that I didn't catch while working on it.
 
-- Unicode characters are not fully supported: they are only supported in strings and comments.
-  The reason is that re2c drowns in big character classes and becomes very slow.
-- Universal character names are not supported.
-- Only simple escape sequences (that is the term from specification) are supported.
-- Nothing related to ISO/IEC 646 is supported.
-- `typeof` from C23 is used to properly generate returns for `CUSHION_DEFER`. It is possible to guess type for temporary
-  storing return expression result before executing defers without `typeof`, but it is difficult and error-prone, 
-  therefore `typeof` is used for now as it is supported by most popular compilers.
-- There might be some bugs and some non-standard-complying behaviours, unfortunately. Not intentionally, but due to lack
-  of time and lack of skills (author is not a profession compiler/parser developer and only did these things as hobby 
-  projects). Also, this tool is only properly used right now on 
-  [Kan project](https://github.com/KonstantinTomashevich/Kan), therefore different projects might encounter different
-  errors that weren't found on Kan.
+The main limitations of current implementation are:
 
-These limitations will be addressed on per-request basis when it is really needed and when author has enough time to 
-do it properly.
+- Unicode characters are only supported inside comments or string literals. They're not supported in identifiers and
+  other language constructs. The reason is that we're using re2c for tokenization and re2c is initially not designed to
+  handle such big character groups, which makes tokenizer quite big and takes long time to compile. I'm not using
+  non-ASCII characters outside of comments and string literals in my project, so I decided to just omit this issue.
+
+- Universal character names are not supported. I don't use them in my other projects, therefore I didn't spend time on
+  supporting these feature here.
+
+- Only simple escape sequences (term from open C23 standard draft) are supported. The reason is the same: I don't use
+  non-simple escape sequence in my projects.
+
+- ISO/IEC 646 is not supported as it seems irrelevant nowadays.
+
+- Macro unwraps inside `#line` directive is not supported.
+
+- `##` operation is only supported for merging identifier token with other identifier or integers: it means that only
+  cases that are guaranteed to be an identifier are supported. Supporting other cases requires tokenization refactor,
+  but it is not really needed right now as all other cases are usually just mistakes, not real use cases.
+
+- `has_include`, `has_embed` and `has_c_attribute` inside conditional inclusion expressions cannot be evaluated as 
+  Cushion does not have full knowledge needed to properly evaluate it for target compiler.
+
+- Only ordinary encoded character literals are supported in conditional inclusion expression as other encodings are not 
+  needed right now, so there is no way to properly test it in real environment. The same goes for multi-character 
+  literals in conditional evaluation expressions.
+
+- Only ordinary encoded strings are supported as `_Pragma` arguments.
+
+- Defer feature relies on `typeof` from C23 standard (or GCC extension) in order to generate proper type for the 
+  variable that will store return value while pre-return defers are being executed.
+
+- `CUSHION_DEFER` cannot be used in braceless if/for/while/do as it would require retrospective brace addition.
+  It also means that return/goto that might trigger defers from parent scopes also should not be used in braceless
+  if/for/while/do scopes.
+
+- `_Pragma` is not supported inside `CUSHION_DEFER` and `CUSHION_STATEMENT_ACCUMULATOR_PUSH` blocks inside macros.
+  There is no difficult reason not to support it here, it is just not needed yet and therefore its support was omitted
+  in that case. `_Pragma` is supported in all other scopes nevertheless.
+
+- Macro unwraps are not supported for `CUSHION_STATEMENT_ACCUMULATOR`, `CUSHION_STATEMENT_ACCUMULATOR_PUSH`,
+  `CUSHION_STATEMENT_ACCUMULATOR_REF` and `CUSHION_STATEMENT_ACCUMULATOR_UNREF` **arguments** (but supported in pushed 
+  blocks, of course) as there is generally no reason to introduce additional complexity there.
+
+Other limitations may arise due to the fact that I'm not a compiler developer and I don't know standard thoroughly, so
+I might've missed something else.
+
+Contributions are welcome, but please contact me prior to starting work on fixing any of those limitations.
 
 ## Acknowledgement
 
