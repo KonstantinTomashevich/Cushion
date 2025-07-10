@@ -1,5 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
+#include <inttypes.h>
+
 #include "internal.h"
 
 enum lexer_token_stack_item_flags_t
@@ -362,7 +364,7 @@ static enum cushion_lex_replacement_list_result_t cushion_lex_replacement_list_s
             break;
 
         case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
-            if (!cushion_instance_has_feature (context->instance, CUSHION_FEATURE_REPLACEMENT_INDEX))
+            if (!cushion_instance_has_feature (context->instance, CUSHION_FEATURE_PREDEFINED_MACRO))
             {
                 cushion_instance_execution_error (context->instance, context->error_context,
                                                   "Encountered __CUSHION_REPLACEMENT_INDEX__, but this feature is not "
@@ -708,6 +710,7 @@ static enum cushion_identifier_kind_t lex_relculate_identifier_kind (const char 
     CHECK_KIND ("CUSHION_SNIPPET", CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET)
     CHECK_KIND ("__CUSHION_EVALUATED_ARGUMENT__", CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT)
     CHECK_KIND ("__CUSHION_REPLACEMENT_INDEX__", CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX)
+    CHECK_KIND ("CUSHION_START_NS_X64", CUSHION_IDENTIFIER_KIND_CUSHION_START_NS_X64)
 
     CHECK_KIND ("__FILE__", CUSHION_IDENTIFIER_KIND_FILE)
     CHECK_KIND ("__LINE__", CUSHION_IDENTIFIER_KIND_LINE)
@@ -1114,6 +1117,54 @@ static inline void macro_replacement_context_evaluate_sub_list (struct cushion_l
 }
 #endif
 
+static struct cushion_token_t lex_create_unsigned_integer_token (struct cushion_lexer_file_state_t *state,
+                                                                 uint64_t token_value)
+{
+    uint64_t value = token_value;
+    unsigned int string_length = 0u;
+
+    if (value > 0u)
+    {
+        while (value > 0u)
+        {
+            ++string_length;
+            value /= 10u;
+        }
+    }
+    else
+    {
+        string_length = 1u;
+    }
+
+    char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
+                                                          _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
+
+    formatted_literal[string_length] = '\0';
+    value = token_value;
+
+    if (value > 0u)
+    {
+        char *cursor = formatted_literal + string_length - 1u;
+        while (value > 0u)
+        {
+            *cursor = (char) ('0' + (value % 10u));
+            --cursor;
+            value /= 10u;
+        }
+    }
+    else
+    {
+        formatted_literal[0u] = '0';
+    }
+
+    return (struct cushion_token_t) {
+        .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
+        .begin = formatted_literal,
+        .end = formatted_literal + string_length,
+        .unsigned_number_value = state->last_token_line,
+    };
+}
+
 /// \return 0 if regular identifier that was not replaced and just injected into sublist, 1 if replacement happened.
 static inline unsigned int macro_replacement_context_process_identifier_into_sub_list (
     struct cushion_lexer_file_state_t *state, struct macro_replacement_context_t *context)
@@ -1310,50 +1361,7 @@ static inline unsigned int macro_replacement_context_process_identifier_into_sub
     case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
     {
         // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
-        unsigned int value = context->replacement_index;
-        unsigned int string_length = 0u;
-
-        if (value > 0u)
-        {
-            while (value > 0u)
-            {
-                ++string_length;
-                value /= 10u;
-            }
-        }
-        else
-        {
-            string_length = 1u;
-        }
-
-        char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
-                                                              _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
-
-        formatted_literal[string_length] = '\0';
-        value = context->replacement_index;
-
-        if (value > 0u)
-        {
-            char *cursor = formatted_literal + string_length - 1u;
-            while (value > 0u)
-            {
-                *cursor = (char) ('0' + (value % 10u));
-                --cursor;
-                value /= 10u;
-            }
-        }
-        else
-        {
-            formatted_literal[0u] = '0';
-        }
-
-        struct cushion_token_t token = {
-            .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
-            .begin = formatted_literal,
-            .end = formatted_literal + string_length,
-            .unsigned_number_value = state->last_token_line,
-        };
-
+        struct cushion_token_t token = lex_create_unsigned_integer_token (state, context->replacement_index);
         macro_replacement_token_list_append (state, &context->sub_list, &token, state->tokenization.file_name,
                                              context->replacement_line);
         return 1u;
@@ -1949,6 +1957,12 @@ static inline void lex_preprocessor_preserved_tail (
                     "Encountered cushion replacement index keyword in preserved preprocessor context.");
                 return;
 
+            case CUSHION_IDENTIFIER_KIND_CUSHION_START_NS_X64:
+                cushion_instance_lexer_error (
+                    state, &current_token_meta,
+                    "Encountered cushion start ns x64 keyword in preserved preprocessor context.");
+                return;
+
             default:
                 break;
             }
@@ -2320,6 +2334,7 @@ static long long lex_do_defined_check (struct cushion_lexer_file_state_t *state,
         case CUSHION_IDENTIFIER_KIND_CUSHION_SNIPPET:
         case CUSHION_IDENTIFIER_KIND_CUSHION_EVALUATED_ARGUMENT:
         case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
+        case CUSHION_IDENTIFIER_KIND_CUSHION_START_NS_X64:
             cushion_instance_lexer_error (state, meta, "Encountered unsupported reserved identifier in defined check.");
             return 0u;
 
@@ -4282,6 +4297,25 @@ static void output_extension_injector_content (struct cushion_instance_t *instan
 
             case CUSHION_IDENTIFIER_KIND_LINE:
                 cushion_instance_output_formatted (instance, "%u", (unsigned int) content->line);
+                break;
+
+            case CUSHION_IDENTIFIER_KIND_CUSHION_START_NS_X64:
+                if (cushion_instance_has_feature (instance, CUSHION_FEATURE_PREDEFINED_MACRO))
+                {
+                    cushion_instance_output_formatted (instance, PRIu64, instance->start_ns_x64);
+                }
+                else
+                {
+                    struct cushion_error_context_t error_context = {
+                        .file = content->file,
+                        .line = content->line,
+                        .column = UINT_MAX,
+                    };
+
+                    cushion_instance_execution_error (
+                        instance, error_context, "Encountered CUSHION_START_NS_X64, but this feature is not enabled.");
+                }
+
                 break;
 
             case CUSHION_IDENTIFIER_KIND_MACRO_PRAGMA:
@@ -6308,54 +6342,6 @@ static struct cushion_token_t lex_create_file_macro_token (struct cushion_lexer_
     };
 }
 
-static struct cushion_token_t lex_create_line_macro_token (struct cushion_lexer_file_state_t *state)
-{
-    // Other parts of code might expect stringized value of literal, so we need to create it, unfortunately.
-    unsigned int value = state->last_token_line;
-    unsigned int string_length = 0u;
-
-    if (value > 0u)
-    {
-        while (value > 0u)
-        {
-            ++string_length;
-            value /= 10u;
-        }
-    }
-    else
-    {
-        string_length = 1u;
-    }
-
-    char *formatted_literal = cushion_allocator_allocate (&state->instance->allocator, string_length + 1u,
-                                                          _Alignof (char), CUSHION_ALLOCATION_CLASS_TRANSIENT);
-
-    formatted_literal[string_length] = '\0';
-    value = state->last_token_line;
-
-    if (value > 0u)
-    {
-        char *cursor = formatted_literal + string_length - 1u;
-        while (value > 0u)
-        {
-            *cursor = (char) ('0' + (value % 10u));
-            --cursor;
-            value /= 10u;
-        }
-    }
-    else
-    {
-        formatted_literal[0u] = '0';
-    }
-
-    return (struct cushion_token_t) {
-        .type = CUSHION_TOKEN_TYPE_NUMBER_INTEGER,
-        .begin = formatted_literal,
-        .end = formatted_literal + string_length,
-        .unsigned_number_value = state->last_token_line,
-    };
-}
-
 static void lex_code_macro_pragma (struct cushion_lexer_file_state_t *state,
                                    const struct lexer_pop_token_meta_t *pragma_token_meta)
 {
@@ -6479,7 +6465,7 @@ static unsigned int lex_code_identifier_is_replaced (struct cushion_lexer_file_s
 
     case CUSHION_IDENTIFIER_KIND_LINE:
     {
-        struct cushion_token_t token = lex_create_line_macro_token (state);
+        struct cushion_token_t token = lex_create_unsigned_integer_token (state, state->last_token_line);
         lexer_file_state_reinsert_token (state, &token);
         return 1u;
     }
@@ -6558,6 +6544,20 @@ static unsigned int lex_code_identifier_is_replaced (struct cushion_lexer_file_s
     case CUSHION_IDENTIFIER_KIND_CUSHION_REPLACEMENT_INDEX:
         cushion_instance_lexer_error (state, current_token_meta,
                                       "Encountered cushion replacement index keyword in unexpected context.");
+        return 1u;
+
+    case CUSHION_IDENTIFIER_KIND_CUSHION_START_NS_X64:
+        if (cushion_instance_has_feature (state->instance, CUSHION_FEATURE_PREDEFINED_MACRO))
+        {
+            struct cushion_token_t token = lex_create_unsigned_integer_token (state, state->instance->start_ns_x64);
+            lexer_file_state_reinsert_token (state, &token);
+        }
+        else
+        {
+            cushion_instance_lexer_error (state, current_token_meta,
+                                          "Encountered CUSHION_START_NS_X64, but this feature is not enabled.");
+        }
+
         return 1u;
 #endif
 
