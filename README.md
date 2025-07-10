@@ -375,8 +375,8 @@ This feature provides new utility predefined macros:
   for currently opened profiler scopes.
 
 - `CUSHION_START_NS_X64` keyword anywhere is always unwrapped as 64bit unsigned integer token equal to the unix epoch
-  time at the start of processing. Useful for versioning things that have version that must be changed every time when
-  file is recompiled.
+  time in nanoseconds at the start of processing. Useful for versioning things that have version that must be changed 
+  every time when file is recompiled.
 
 ## Limitations
 
