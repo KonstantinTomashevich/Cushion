@@ -1,3 +1,5 @@
+#include <time.h>
+
 #include "internal.h"
 
 void cushion_allocator_init (struct cushion_allocator_t *instance)
@@ -171,6 +173,10 @@ void cushion_instance_clean_configuration (struct cushion_instance_t *instance)
     instance->statement_unordered_push_last = NULL;
 
     instance->macro_replacement_index = 0u;
+
+    struct timespec time;
+    timespec_get (&time, TIME_UTC);
+    instance->start_ns_x64 = ((uint64_t) time.tv_sec) * 1000000000u + (uint64_t) time.tv_nsec;
 #endif
 
     instance->inputs_first = NULL;

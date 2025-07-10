@@ -3,7 +3,7 @@
 Cushion is a **partial** C preprocessor for softening the code before passing it to custom code generation software.
 
 > **Warning:**
-> Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or 
+> Make sure that you've read Limitations section near the end of readme before considering to use this tool and/or
 > creating issues.
 
 ## License
@@ -14,12 +14,12 @@ Cushion is a **partial** C preprocessor for softening the code before passing it
 
 C is a very easy to parse language comparing to most modern languages, therefore it is possible to extend C language
 on per-project basis using custom code generation tools: for example, custom reflection generation or boilerplate
-code generation software. 
+code generation software.
 
 However, almost always there is one huge obstacle to doing so: preprocessing. As C code is designed to be preprocessed
 before compiling, it is impossible to write such parser in code generator that will be able to properly understand
-everything that is going on without doing actual preprocessing (macro could be anywhere and you don't know what it is 
-until preprocessing). Of course, it is possible to use preprocessor-only mode from the compiler, but it has its own 
+everything that is going on without doing actual preprocessing (macro could be anywhere and you don't know what it is
+until preprocessing). Of course, it is possible to use preprocessor-only mode from the compiler, but it has its own
 issues discussed below.
 
 Cushion is a preprocessor that is aimed to be used to prepare code for code generation tools pass and therefore is much
@@ -28,7 +28,7 @@ more convenient for this purpose than inbuilt preprocessors.
 ### Inbuilt preprocessors: issues
 
 By using inbuilt preprocessors we mean running `gcc -E`, `cl /P /Fi` and so on. However, usage of standalone executables
-like `cpp` and `clang-cpp` has the same issues as it is essentially the same preprocessors, but in different 
+like `cpp` and `clang-cpp` has the same issues as it is essentially the same preprocessors, but in different
 executable.
 
 - Postprocessor output is not standardized, therefore it is slightly different in different compilers. As long as you
@@ -38,20 +38,20 @@ executable.
 
 - Postprocessor output does not usually contain all the context needed to properly compile code. In other words,
   compilers usually do not expect to be given fully preprocessed code and properly operate on it without some metadata
-  from previous stages. In practice, it may result in errors like: clang will spam warnings about GNU like markup 
+  from previous stages. In practice, it may result in errors like: clang will spam warnings about GNU like markup
   despite the fact that its preprocessor produced that markup, a bunch of warnings from system or std headers may appear
-  as compiler no longer knows that it is part of system or std headers (always happens if you force clang preprocessor 
-  to use standard line markup instead of GNU). It is not a tragedy, but existence if this issues makes me worry that 
+  as compiler no longer knows that it is part of system or std headers (always happens if you force clang preprocessor
+  to use standard line markup instead of GNU). It is not a tragedy, but existence if this issues makes me worry that
   some more serious issues due to this logic might appear down the road.
 
 - Integrating inbuilt preprocessor execution into your build system might be a complex task. With Ninja generator in
   CMake it is possible to just create separate target and add necessary compile options to it, however it somehow
   makes it impossible for CLion to load project on Windows -- highlight is gone everywhere, but on Linux everything
-  is fine. It also breaks dependency management for compilation on Windows: preprocessor adds line markup with 
+  is fine. It also breaks dependency management for compilation on Windows: preprocessor adds line markup with
   things like `"<built-in>"` and `"<command line>"` and Ninja somehow treats them as dependencies, however they do not
-  really exist and Ninja just compiles the file from scratch every build due to missing dependencies. And Visual Studio 
+  really exist and Ninja just compiles the file from scratch every build due to missing dependencies. And Visual Studio
   generator situation is worse as just adding flags somehow does not work and everything requires whole bucket of custom
-  handling [like this](https://github.com/KonstantinTomashevich/CMakeUnitFramework/blob/ee96341/Unit.cmake#L484). 
+  handling [like this](https://github.com/KonstantinTomashevich/CMakeUnitFramework/blob/ee96341/Unit.cmake#L484).
   I haven't tried it on other generators and IDEs, however I'm almost certain they will have their own quirks.
 
 - Resolving all includes, especially system ones, is generally inefficient when you're running code generation for
@@ -72,8 +72,8 @@ Cushion **does not do full preprocessing**: its goal is to only make code proper
 this code would pass through actual preprocessing inside your compiler once again. In details:
 
 - It does not perform full include, instead tier-based include handling is used: using command line,
-  full-include (do proper include) and scan-only-include (only scan for macros, do not do anything else) paths are 
-  provided. Other includes are just left as it is. That means that there would not be any unexpected code in the 
+  full-include (do proper include) and scan-only-include (only scan for macros, do not do anything else) paths are
+  provided. Other includes are just left as it is. That means that there would not be any unexpected code in the
   output, which makes life for code generators easier and fixes system-header-bleeding issue described above.
 
 - It only cares about conditional compilation, macro definitions and macro replacement, it does not touch pragmas,
@@ -89,33 +89,33 @@ Therefore:
   so no more unexpected warnings from compiler in headers that are not yours. It also makes sure that code generator
   context is not bloated.
 
-- It is simple to integrate it into build system as a usual custom command with custom cmake depfile, which is produced 
+- It is simple to integrate it into build system as a usual custom command with custom cmake depfile, which is produced
   by Cushion too. Therefore, it requires no compiler-specific handling.
 
 ## Non-standard preprocessing extensions
 
-I've been using custom code generation on 
+I've been using custom code generation on
 [my game engine project (work in progress)](https://github.com/KonstantinTomashevich/Kan) and I've gathered some
 patterns that might be useful on preprocessor level for code generation. Therefore, I've decided to extend preprocessing
-with some features. They're completely optional and their usage without passing enabling command line options to Cushion 
+with some features. They're completely optional and their usage without passing enabling command line options to Cushion
 command would result in errors.
 
 ### Defer blocks
 
 `CUSHION_DEFER { ... your code ... }` makes it possible to write blocks of code that are executed on scope exit through
-natural means: `return`, `break`, `continue`, `goto` or just scope end. It also makes sure that `return` value is 
-calculated before executing defers and all defers are executed in reverse order. That makes RAII possible (which is a 
+natural means: `return`, `break`, `continue`, `goto` or just scope end. It also makes sure that `return` value is
+calculated before executing defers and all defers are executed in reverse order. That makes RAII possible (which is a
 very cool feature of C++) and greatly simplifies handling of locks and internal data with lifecycle inside function.
-Also, this feature can be used inside regular macros, making something like 
+Also, this feature can be used inside regular macros, making something like
 `#define LOCK_GUARD(LOCK) do_lock (LOCK); CUSHION_DEFER { do_unlock (LOCK); }` possible.
 
 ### Wrapper macros
 
 Cushion introduces `__CUSHION_WRAPPED__` identifier for usage inside macros. If macro uses `__CUSHION_WRAPPED__`, then
 it becomes wrapper macro: wrapper macro must always be followed by block of code in curly braces, that is then
-inserted in place of `__CUSHION_WRAPPED__` identifiers (enclosing curly braces are not inserted). This is very useful 
-when we need to embed some logic inside complex construction like some complex iteration. For example, if you're 
-iterating on something with database-like API, you need to properly manage cursor, access handle, perhaps something 
+inserted in place of `__CUSHION_WRAPPED__` identifiers (enclosing curly braces are not inserted). This is very useful
+when we need to embed some logic inside complex construction like some complex iteration. For example, if you're
+iterating on something with database-like API, you need to properly manage cursor, access handle, perhaps something
 else too. Which is usually the same almost everywhere in your code, so it will be a good place for macro like that:
 
 ```c
@@ -144,15 +144,15 @@ else too. Which is usually the same almost everywhere in your code, so it will b
     }
 ```
 
-As you can see, we can combine power of defer and wrapped macros here in order to produce convenient reusable syntax 
+As you can see, we can combine power of defer and wrapped macros here in order to produce convenient reusable syntax
 sugar for executing arbitrary code inside queries. Moreover, because of defer blocks, it is safe to return whatever we
-need from wrapped code if we need to or to just break out of query: cursor and access will be properly closed. Just 
+need from wrapped code if we need to or to just break out of query: cursor and access will be properly closed. Just
 don't return value pointer like that, databases APIs do not expect such behavior for sure.
 
 There is an argument that similar result could be achieved through macro with variadic arguments. It is true and it is
-totally possible, however passing everything to usual macro as variadic arguments results in loss of line information, 
-making it very difficult to fix compilation errors and making it impossible to debug properly. 
-`__CUSHION_WRAPPED__` is guaranteed to save lines inside wrapped block, making fixing compilation and debugging as easy 
+totally possible, however passing everything to usual macro as variadic arguments results in loss of line information,
+making it very difficult to fix compilation errors and making it impossible to debug properly.
+`__CUSHION_WRAPPED__` is guaranteed to save lines inside wrapped block, making fixing compilation and debugging as easy
 as with usual code block.
 
 Also, it is allowed to use directives like `#define`, `#line` and `#undef` inside `__CUSHION_WRAPPED__` blocks: they
@@ -168,7 +168,7 @@ consists of several commands that tell Cushion what to do:
   generated statements will be written after full preprocessing pass.
 
 - `CUSHION_STATEMENT_ACCUMULATOR_PUSH (statement_accumulator_identifier, options...) { ... your code ... }`
-  pushes code into accumulator with given identifier, essentially generating new code in that place. Comma separated 
+  pushes code into accumulator with given identifier, essentially generating new code in that place. Comma separated
   options provide more control on how statement is pushed. Supported options are:
 
     - `unique` -- given code is compared to the statements that were already pushed. If other exactly equal code was
@@ -183,8 +183,8 @@ consists of several commands that tell Cushion what to do:
 
 - `CUSHION_STATEMENT_ACCUMULATOR_REF (reference_identifier, source_identifier)` defines a reference to
   statement accumulator, which can be used instead of an actual accumulator in push command. It can also receive
-  `unordered` pushes if any. Reference cannot point to each other, only to real accumulators, for the sake of 
-  simplicity. The goal of references is to provide dynamic abstracted context for pushing that can be changed from 
+  `unordered` pushes if any. Reference cannot point to each other, only to real accumulators, for the sake of
+  simplicity. The goal of references is to provide dynamic abstracted context for pushing that can be changed from
   outside when needed without being explicitly specified in push command.
 
 - `CUSHION_STATEMENT_ACCUMULATOR_UNREF (reference_identifier)` destroys a reference with given name.
@@ -301,8 +301,8 @@ even if you do, you'll have lots of other issues to solve already.
 
 ### Snippets
 
-Snippet is a small object-like macro that can be created from inside another macro replacement list using 
-`CUSHION_SNIPPET`, similar to how `_Pragma` is unwrapped. Unlike macros, snippet redefinition is always allowed. 
+Snippet is a small object-like macro that can be created from inside another macro replacement list using
+`CUSHION_SNIPPET`, similar to how `_Pragma` is unwrapped. Unlike macros, snippet redefinition is always allowed.
 For example:
 
 ```c
@@ -326,7 +326,7 @@ treated as token array, close to how `__VA_ARGS__` are treated.
 
 ### Macro argument evaluation
 
-By standard, during macro replacement list evaluation argument tokens are unwrapped and `#`/`##` operations are applied 
+By standard, during macro replacement list evaluation argument tokens are unwrapped and `#`/`##` operations are applied
 before any other macro evaluation takes place. While it is okay in most cases, it causes potentially unexpected behavior
 (from the user perspective) when macro call is passed as argument, but this argument participates in `#`/`##`.
 For example:
@@ -345,9 +345,9 @@ STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
 But, in the above example, we might've wanted to get `"generated_container_abc"` string, as it would be more
 convenient for logging and might even be required for some kind of data output like json.
 
-To solve this issue, `__CUSHION_EVALUATED_ARGUMENT__` keyword inside macros is introduced. It evaluates all macro 
+To solve this issue, `__CUSHION_EVALUATED_ARGUMENT__` keyword inside macros is introduced. It evaluates all macro
 replacements in given arguments including `__VA_ARGS__`. This keyword should be used the same way as function-like macro
-or `__VA_OPT__` and should always have only one argument -- macro argument name identifier, `__VA_ARGS__` or 
+or `__VA_OPT__` and should always have only one argument -- macro argument name identifier, `__VA_ARGS__` or
 `__VA_OPT__` expression. For example:
 
 ```c
@@ -365,16 +365,22 @@ STRINGIZE_ME (GENERATED_CONTAINER_TYPE_NAME (abc))
 > Wrapper macros are not supported inside `__CUSHION_EVALUATED_ARGUMENT__` as they do not make any sense here: it is
 > counterintuitive to paste wrapper macro as argument, so there is no sense to support this case.
 
-### Replacement index
+### Predefined macro extension
 
-This feature provides `__CUSHION_REPLACEMENT_INDEX__` keyword inside macros that behaves like argument and is always
-unwrapped as integer token equal to the index of macro replacement list evaluation call during current Cushion 
-execution. It is a useful utility for generating unique identifiers like unique variable names for some temporary 
-variables, for example handles for currently opened profiler scopes.
+This feature provides new utility predefined macros:
+
+- `__CUSHION_REPLACEMENT_INDEX__` keyword inside macros that behaves like argument and is always unwrapped as integer
+  token equal to the index of macro replacement list evaluation call during current Cushion execution. It is a useful
+  utility for generating unique identifiers like unique variable names for some temporary variables, for example handles
+  for currently opened profiler scopes.
+
+- `CUSHION_START_NS_X64` keyword anywhere is always unwrapped as 64bit unsigned integer token equal to the unix epoch
+  time in nanoseconds at the start of processing. Useful for versioning things that have version that must be changed 
+  every time when file is recompiled.
 
 ## Limitations
 
-Right now Cushion is more of a hobby project and is not a heavy-production-ready tech. 
+Right now Cushion is more of a hobby project and is not a heavy-production-ready tech.
 Also, it is designed as a tool for [my game engine project Kan](https://github.com/KonstantinTomashevich/Kan),
 therefore there might be cases that I didn't catch while working on it.
 
@@ -399,16 +405,16 @@ The main limitations of current implementation are:
   cases that are guaranteed to be an identifier are supported. Supporting other cases requires tokenization refactor,
   but it is not really needed right now as all other cases are usually just mistakes, not real use cases.
 
-- `has_include`, `has_embed` and `has_c_attribute` inside conditional inclusion expressions cannot be evaluated as 
+- `has_include`, `has_embed` and `has_c_attribute` inside conditional inclusion expressions cannot be evaluated as
   Cushion does not have full knowledge needed to properly evaluate it for target compiler.
 
-- Only ordinary encoded character literals are supported in conditional inclusion expression as other encodings are not 
-  needed right now, so there is no way to properly test it in real environment. The same goes for multi-character 
+- Only ordinary encoded character literals are supported in conditional inclusion expression as other encodings are not
+  needed right now, so there is no way to properly test it in real environment. The same goes for multi-character
   literals in conditional evaluation expressions.
 
 - Only ordinary encoded strings are supported as `_Pragma` arguments.
 
-- Defer feature relies on `typeof` from C23 standard (or GCC extension) in order to generate proper type for the 
+- Defer feature relies on `typeof` from C23 standard (or GCC extension) in order to generate proper type for the
   variable that will store return value while pre-return defers are being executed.
 
 - `CUSHION_DEFER` cannot be used in braceless if/for/while/do as it would require retrospective brace addition.
@@ -420,7 +426,7 @@ The main limitations of current implementation are:
   in that case. `_Pragma` is supported in all other scopes nevertheless.
 
 - Macro unwraps are not supported for `CUSHION_STATEMENT_ACCUMULATOR`, `CUSHION_STATEMENT_ACCUMULATOR_PUSH`,
-  `CUSHION_STATEMENT_ACCUMULATOR_REF` and `CUSHION_STATEMENT_ACCUMULATOR_UNREF` **arguments** (but supported in pushed 
+  `CUSHION_STATEMENT_ACCUMULATOR_REF` and `CUSHION_STATEMENT_ACCUMULATOR_UNREF` **arguments** (but supported in pushed
   blocks, of course) as there is generally no reason to introduce additional complexity there.
 
 Other limitations may arise due to the fact that I'm not a compiler developer and I don't know standard thoroughly, so
