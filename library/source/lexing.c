@@ -1227,10 +1227,10 @@ static inline unsigned int macro_replacement_context_process_identifier_into_sub
         }
         else
         {
-            // __VA_OPT__ should only be replaced if variadic arguments have tokens, 
+            // __VA_OPT__ should only be replaced if variadic arguments have tokens,
             // empty variadic argument does not enable content of __VA_OPT__ by standard.
             unsigned int any_variadic = 0u;
-            
+
             while (first_variadic_argument)
             {
                 if (first_variadic_argument->tokens_first)
@@ -1238,10 +1238,10 @@ static inline unsigned int macro_replacement_context_process_identifier_into_sub
                     any_variadic = 1u;
                     break;
                 }
-                
+
                 first_variadic_argument = first_variadic_argument->next;
             }
-            
+
             // Scan for the opening parenthesis.
             context->current_token = context->current_token->next;
             // Preprocessor, new line, glue, comment and end of file should never appear here anyway.
