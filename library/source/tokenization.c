@@ -815,8 +815,9 @@ start_next_token:
          }
 
          simple_escape_sequence = "\\" (['"?\\abfnrtv] | ([0-9]+));
+         unicode_escape_sequence = ("\\u" [0-9a-fA-F]{4}) | ("\\U" [0-9a-fA-F]{8});
          // For now, we only support simple escape sequences, but that might be changed in the future.
-         escape_sequence = simple_escape_sequence;
+         escape_sequence = simple_escape_sequence | unicode_escape_sequence;
          character_literal_sequence = (escape_sequence | [^'\\\n])*;
          string_literal_sequence = (escape_sequence | [^"\\\n])*;
 
