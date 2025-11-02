@@ -155,9 +155,19 @@ making it very difficult to fix compilation errors and making it impossible to d
 `__CUSHION_WRAPPED__` is guaranteed to save lines inside wrapped block, making fixing compilation and debugging as easy
 as with usual code block.
 
-Also, it is allowed to use directives like `#define`, `#line` and `#undef` inside `__CUSHION_WRAPPED__` blocks: they
-will be correctly unwrapped there. But beware that `__CUSHION_WRAPPED__` might be pasted several times, therefore if
-you use `#define`, you also need to use `#undef` for the same macro in order to avoid duplication.
+Also, it is allowed to use directives like `#define`, `#line`, `#undef` and preprocessor conditionals inside 
+`__CUSHION_WRAPPED__` blocks: they will be correctly unwrapped there. But beware that `__CUSHION_WRAPPED__` content is 
+treated as a sequence of tokens that can be pasted one or more times during macro replacement. That means that any
+preprocessor directive evaluation is postponed until tokens from macro replacement are actually processed. Which
+results in several caveats:
+
+- If you use `#define` inside wrapped block, you should also add `#undef` there, otherwise it will result in
+  redefinition error if wrapped block is used several times inside macro.
+- If you use conditional directives like `#if` inside wrapped block, you should take care of closing them properly
+  inside the same block. Wrapped block capture logic will ignore these directives and just copy them into token
+  sequence, which will be later pasted along with wrapped block. Failing to close them properly inside wrapped block
+  might result in a hard to decipher error with unclosed conditionals or mismatched braces, for example. This might
+  be improved later.
 
 ### Statement accumulators
 

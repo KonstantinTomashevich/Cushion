@@ -147,6 +147,40 @@ static inline void cushion_instance_lexer_error (struct cushion_lexer_file_state
     va_end (variadic_arguments);
 }
 
+/// \brief Needed to properly simulate flags like CUSHION_TOKENIZATION_FLAGS_SKIP_REGULAR while popping preserved
+///        tokens out of tokens stack from lexer state.
+static inline unsigned int lexer_should_skip_preserved_token (struct cushion_lexer_file_state_t *state,
+                                                              struct cushion_token_list_item_t *item)
+{
+    if (state->tokenization.flags & CUSHION_TOKENIZATION_FLAGS_SKIP_REGULAR)
+    {
+        switch (item->token.type)
+        {
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_IFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELIFNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ELSE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_ENDIF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_INCLUDE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_SYSTEM:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_HEADER_USER:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_DEFINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_UNDEF:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_LINE:
+        case CUSHION_TOKEN_TYPE_PREPROCESSOR_PRAGMA:
+            return 0u;
+
+        default:
+            return 1u;
+        }
+    }
+
+    return 0u;
+}
+
 static struct lexer_pop_token_meta_t lexer_file_state_pop_token (struct cushion_lexer_file_state_t *state,
                                                                  struct cushion_token_t *output)
 {
@@ -160,22 +194,28 @@ static struct lexer_pop_token_meta_t lexer_file_state_pop_token (struct cushion_
     {
         if (state->token_stack_top->tokens_current)
         {
-            *output = state->token_stack_top->tokens_current->token;
+            struct cushion_token_list_item_t *item = state->token_stack_top->tokens_current;
+            state->token_stack_top->tokens_current = state->token_stack_top->tokens_current->next;
+
+            if (lexer_should_skip_preserved_token (state, item))
+            {
+                continue;
+            }
+
+            *output = item->token;
             meta.flags = state->token_stack_top->flags;
-            meta.file = state->token_stack_top->tokens_current->file;
-            meta.line = state->token_stack_top->tokens_current->line;
+            meta.file = item->file;
+            meta.line = item->line;
 
 #if defined(CUSHION_EXTENSIONS)
-            if (state->token_stack_top->tokens_current->flags & CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK)
+            if (item->flags & CUSHION_TOKEN_LIST_ITEM_FLAG_WRAPPED_BLOCK)
             {
                 // Manually disable macro replacement logic for wrapped blocks.
                 meta.flags &= ~LEXER_TOKEN_STACK_ITEM_FLAG_MACRO_REPLACEMENT;
             }
 
-            state->token_stack_top->last_popped_flags = state->token_stack_top->tokens_current->flags;
+            state->token_stack_top->last_popped_flags = item->flags;
 #endif
-
-            state->token_stack_top->tokens_current = state->token_stack_top->tokens_current->next;
             goto read_token;
         }
         else
