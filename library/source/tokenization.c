@@ -484,7 +484,7 @@ static enum cushion_internal_result_t tokenize_hex_value (const char *begin,
         case 'D':
         case 'E':
         case 'F':
-            result = result * 16u + (*begin - 'A');
+            result = result * 16u + 10u + (*begin - 'A');
             break;
 
         case 'a':
@@ -493,7 +493,7 @@ static enum cushion_internal_result_t tokenize_hex_value (const char *begin,
         case 'd':
         case 'e':
         case 'f':
-            result = result * 16u + (*begin - 'a');
+            result = result * 16u + 10u + (*begin - 'a');
             break;
 
         default:
