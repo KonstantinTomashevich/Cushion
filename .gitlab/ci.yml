@@ -4,11 +4,13 @@
 # - cmake, git and python installed.
 # - gcc and clang installed.
 # - gcc x32 libs installed.
+# - re2c 3.0+ installation.
 #
 # For this workflow, windows runner should have:
 # - cmake, git and python installed (through choco).
 # - VS2022 with clang included installed.
 # - cl x64 and clang-cl x64 must be in path (for example, runner could be executed from x64 developer cmd)
+# - re2c 3.0+ installation.
 
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
