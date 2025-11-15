@@ -1,0 +1,77 @@
+# This config is used on self-hosted GitLab instance for CI runs on local PC.
+#
+# For this workflow, linux runner should have:
+# - cmake, git and python installed.
+# - gcc and clang installed.
+# - gcc x32 libs installed.
+#
+# For this workflow, windows runner should have:
+# - cmake, git and python installed (through choco).
+# - VS2022 with clang included installed.
+# - cl x64 and clang-cl x64 must be in path (for example, runner could be executed from x64 developer cmd)
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_DEPTH: 4
+  # We use custom clone path in order to avoid issues with long paths on Windows.
+  GIT_CLONE_PATH: $CI_BUILDS_DIR/cushion
+  FF_USE_FASTZIP: true
+  CACHE_COMPRESSION_LEVEL: fastest
+  
+stages:
+  - verify
+
+verify:
+  stage: verify
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "web" || 
+        $CI_PIPELINE_SOURCE == "api" || 
+        $CI_PIPELINE_SOURCE == "merge_request_event" ||
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always
+    - when: never
+  parallel:
+    matrix:
+      - PRESET:
+          - development_ninja_gcc_debug
+          - development_ninja_gcc_x32_debug
+          - development_ninja_clang_debug
+          - no_extensions_check_ninja_clang_debug
+        CONFIG: Debug
+        SYSTEM_TAG: linux
+      - PRESET:
+          - development_ninja_gcc_release
+          - development_ninja_gcc_x32_release
+          - development_ninja_clang_release
+          - no_extensions_check_ninja_clang_release
+        CONFIG: Release
+        SYSTEM_TAG: linux
+      - PRESET:
+          - development_ninja_msvc_debug
+          - development_ninja_clang_cl_debug
+        CONFIG: Debug
+        SYSTEM_TAG: windows
+      - PRESET:
+          - development_ninja_msvc_release
+          - development_ninja_clang_cl_release
+        CONFIG: Release
+        SYSTEM_TAG: windows
+  tags:
+    - $SYSTEM_TAG
+  cache:
+    key: $PRESET
+    paths:
+      - build/ci
+  script:
+    - cmake --preset $PRESET -B build/ci
+    - cd build/ci
+    - cmake --build . --target cushion_format_check --config $CONFIG
+    - cmake --build . --target cushion --config $CONFIG
+    - ctest --build-config $CONFIG --parallel --output-on-failure
+  artifacts:
+    name: test_logs_$PRESET
+    expire_in: 1 week
+    when: on_failure
+    paths:
+      - build/ci/Testing/Temporary
