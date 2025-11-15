@@ -68,6 +68,26 @@
       }
     },
     {
+      "name": "ninja_msvc",
+      "description": "Mixin with common configuration for selecting msvc under ninja. Requires cl in path!",
+      "generator": "Ninja",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "ninja_clang_cl",
+      "description": "Mixin with common configuration for selecting clang-cl under ninja. Requires clang-cl in path!",
+      "generator": "Ninja",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    },
+    {
       "name": "visual_studio_msvc",
       "description": "Mixin with common configuration for builds using visual studio and cl.",
       "hidden": true,
@@ -189,6 +209,70 @@
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
+      }
+    },
+    {
+      "name": "development_ninja_msvc_debug",
+      "description": "Profile for building debug development version on ninja with msvc on Windows.",
+      "inherits": [
+        "development",
+        "ninja_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_msvc_release",
+      "description": "Profile for building release development version on ninja with msvc on Windows.",
+      "inherits": [
+        "development",
+        "ninja_msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_clang_cl_debug",
+      "description": "Profile for building debug development version on ninja with clang cl on Windows.",
+      "inherits": [
+        "development",
+        "ninja_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "development_ninja_clang_cl_release",
+      "description": "Profile for building release development version on ninja with clang cl on Windows.",
+      "inherits": [
+        "development",
+        "ninja_clang_cl"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     },
     {
